@@ -13,6 +13,7 @@ interface Props {
 
 export type AppMapHandle = {
   centerOn: (lng: number, lat: number, zoom?: number) => void
+  resize: () => void
 }
 
 const AppMap = forwardRef<AppMapHandle | null, Props & { onMapReady?: (map: any) => void }>(
@@ -29,6 +30,15 @@ const AppMap = forwardRef<AppMapHandle | null, Props & { onMapReady?: (map: any)
             try {
               mapRef.current.setCenter([lng, lat])
               mapRef.current.setZoom(z)
+            } catch (e) {
+              // ignore
+            }
+          }
+        },
+        resize() {
+          if (mapRef.current) {
+            try {
+              mapRef.current.resize()
             } catch (e) {
               // ignore
             }

@@ -6,9 +6,12 @@ import ItineraryLegs from '@/components/map/ItineraryLegs'
 import RouteFilterTabs from '@/components/client/RouteFilterTabs'
 import LoadingSkeleton from '@/components/ui/LoadingSkeleton'
 import EmptyState from '@/components/ui/EmptyState'
-import SearchInput from '@/components/ui/SearchInput'
-import { geocode } from '@/services/map/geocode'
-import { findItineraries } from '@/services/routing/routingService'
+import { getCurrentPosition } from '@/services/geolocation'
+import {
+  findItineraries,
+  ANDIJON_LANDMARKS,
+  searchLandmarks
+} from '@/services/routing/routingService'
 import {
   addMarker,
   clearAllMarkers,
@@ -20,10 +23,17 @@ import { Itinerary, OptimizationMode } from '@/types/client'
 import { uz } from '@/locales/uz'
 
 export default function Search() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
+
   const fromParam = searchParams.get('from') || 'Eski Shahar'
   const toParam = searchParams.get('to') || 'Yangi Bozor'
+
+  const [fromInput, setFromInput] = useState(fromParam)
+  const [toInput, setToInput] = useState(toParam)
+  const [showToSuggestions, setShowToSuggestions] = useState(false)
+  const [toSuggestions, setToSuggestions] = useState(ANDIJON_LANDMARKS.slice(0, 4))
+  const [gpsLoading, setGpsLoading] = useState(false)
 
   const [loading, setLoading] = useState(true)
   const [itineraries, setItineraries] = useState<Itinerary[]>([])
@@ -32,40 +42,19 @@ export default function Search() {
   const [map, setMap] = useState<any | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const mapRef = useRef<AppMapHandle | null>(null)
-  const [query, setQuery] = useState('')
   const [mobileView, setMobileView] = useState<'list' | 'map'>('list')
+
+  // Keep inputs in sync when URL search params change
+  useEffect(() => {
+    setFromInput(fromParam)
+    setToInput(toParam)
+  }, [fromParam, toParam])
 
   const handleMapReady = useCallback((m: any) => {
     setMap(m)
   }, [])
 
-  const handleSearch = useCallback(async (q: string) => {
-    if (!q || q.length < 2) return
-    try {
-      // allow tests to inject a hoist-safe mock via globalThis
-      const geocodeFn = (globalThis as any).__testGeocode || (globalThis as any).__mockGeocode || geocode
-      const results = await geocodeFn(q)
-      if (results && results.length > 0) {
-        const first = results[0]
-        if (mapRef.current) {
-          mapRef.current.centerOn(first.center[0], first.center[1], 14)
-        } else {
-          // if ref not ready yet (race in tests), try again on next tick
-          setTimeout(() => {
-            try {
-              mapRef.current?.centerOn(first.center[0], first.center[1], 14)
-            } catch (e) {
-              // ignore
-            }
-          }, 0)
-        }
-      }
-    } catch (e) {
-      // ignore geocode errors
-    }
-  }, [])
-
-  // Execute search with abort controller
+  // Execute search whenever fromParam or toParam changes
   useEffect(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
@@ -77,7 +66,7 @@ export default function Search() {
     findItineraries(fromParam, toParam, controller.signal)
       .then((results) => {
         setItineraries(results)
-        // Default select fastest
+        // Select matching mode or fallback to first result
         const match = results.find((r) => r.mode === selectedMode) || results[0]
         setSelectedItinerary(match || null)
       })
@@ -95,6 +84,47 @@ export default function Search() {
     }
   }, [fromParam, toParam])
 
+  // Execute search by updating URL search params
+  const executeSearch = (newFrom: string, newTo: string) => {
+    const f = newFrom.trim() || 'Eski Shahar'
+    const t = newTo.trim() || 'Yangi Bozor'
+    setSearchParams({ from: f, to: t })
+    setShowToSuggestions(false)
+  }
+
+  const handleSwap = () => {
+    const nextFrom = toInput
+    const nextTo = fromInput
+    setFromInput(nextFrom)
+    setToInput(nextTo)
+    executeSearch(nextFrom, nextTo)
+  }
+
+  const handleFetchGps = () => {
+    setGpsLoading(true)
+    getCurrentPosition()
+      .then((pos) => {
+        const txt = uz.search.useCurrentLocation
+        setFromInput(txt)
+        executeSearch(txt, toInput)
+      })
+      .catch(() => {
+        // graceful fallback
+      })
+      .finally(() => setGpsLoading(false))
+  }
+
+  const handleToInputChange = (val: string) => {
+    setToInput(val)
+    setToSuggestions(searchLandmarks(val))
+    setShowToSuggestions(true)
+  }
+
+  const handleSelectLandmark = (name: string) => {
+    setToInput(name)
+    executeSearch(fromInput, name)
+  }
+
   // Filter itineraries according to selectedMode
   const filteredItineraries = itineraries.filter((i) => {
     if (selectedMode === 'fastest') return true
@@ -109,7 +139,6 @@ export default function Search() {
     if (!map || !selectedItinerary) return
 
     clearAllMarkers(map)
-    // Clear lines
     clearPolyline(map, 'walk-1')
     clearPolyline(map, 'transit-main')
     clearPolyline(map, 'walk-2')
@@ -149,44 +178,154 @@ export default function Search() {
     }
   }, [map, selectedItinerary])
 
+  // Auto-resize map when switching to mobile map tab
+  useEffect(() => {
+    if (mobileView === 'map' && mapRef.current) {
+      setTimeout(() => {
+        mapRef.current?.resize()
+      }, 100)
+    }
+  }, [mobileView])
+
   return (
     <div className="space-y-4">
-      {/* Route Header summary */}
-      <div className="bg-white rounded-2xl p-4 border border-neutral-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-neutral-800">
+      {/* Interactive A -> B Search Box */}
+      <section className="bg-white rounded-2xl p-4 border border-neutral-200 shadow-sm space-y-3">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            executeSearch(fromInput, toInput)
+          }}
+          className="space-y-3"
+        >
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            {/* Origin Input A */}
+            <div className="relative flex-1">
+              <span className="absolute left-3 top-3 text-blue-600">
+                <i className="ri-record-circle-line"></i>
+              </span>
+              <input
+                type="text"
+                value={fromInput}
+                onChange={(e) => setFromInput(e.target.value)}
+                placeholder="A — Qayerdan?"
+                className="w-full pl-9 pr-8 py-2.5 bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="button"
+                onClick={handleFetchGps}
+                title="Joriy joylashuv"
+                className="absolute right-2.5 top-2.5 text-neutral-400 hover:text-blue-600 p-0.5"
+              >
+                <i className={`ri-crosshair-2-line ${gpsLoading ? 'animate-spin' : ''}`}></i>
+              </button>
+            </div>
+
+            {/* Swap Button */}
+            <button
+              type="button"
+              onClick={handleSwap}
+              title="A va B joylarini almashtirish"
+              className="self-center p-2 rounded-xl bg-neutral-100 hover:bg-blue-50 hover:text-blue-600 text-neutral-600 transition-colors"
+            >
+              <i className="ri-arrow-up-down-line sm:ri-arrow-left-right-line text-base font-bold"></i>
+            </button>
+
+            {/* Destination Input B */}
+            <div className="relative flex-1">
+              <span className="absolute left-3 top-3 text-red-500">
+                <i className="ri-map-pin-2-fill"></i>
+              </span>
+              <input
+                type="text"
+                value={toInput}
+                onChange={(e) => handleToInputChange(e.target.value)}
+                onFocus={() => setShowToSuggestions(true)}
+                placeholder="B — Qayerga?"
+                className="w-full pl-9 pr-8 py-2.5 bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {toInput && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setToInput('')
+                    setShowToSuggestions(true)
+                  }}
+                  className="absolute right-2.5 top-2.5 text-neutral-400 hover:text-neutral-600 p-0.5"
+                >
+                  <i className="ri-close-circle-fill"></i>
+                </button>
+              )}
+
+              {/* Suggestions Dropdown */}
+              {showToSuggestions && toSuggestions.length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-neutral-200 rounded-xl shadow-lg z-30 overflow-hidden divide-y divide-neutral-100 max-h-52 overflow-y-auto">
+                  {toSuggestions.map((item) => (
+                    <div
+                      key={item.name}
+                      className="px-3 py-2 hover:bg-blue-50 hover:text-blue-700 cursor-pointer flex items-center justify-between text-xs"
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        handleSelectLandmark(item.name)
+                      }}
+                    >
+                      <div>
+                        <div className="font-semibold text-neutral-800">{item.name}</div>
+                        <div className="text-[10px] text-neutral-400">{item.description}</div>
+                      </div>
+                      <i className="ri-arrow-right-s-line text-neutral-400"></i>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Search Submit Button */}
+            <button
+              type="submit"
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold rounded-xl text-xs sm:text-sm transition-colors shadow-xs flex items-center justify-center gap-1.5"
+            >
+              <i className="ri-search-2-line"></i>
+              <span>Qidirish</span>
+            </button>
+          </div>
+
+          {/* Quick Destination Chips */}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 text-xs">
+            <span className="text-[11px] text-neutral-400 font-medium whitespace-nowrap">
+              Tezkor:
+            </span>
+            {['Eski Shahar (Registon)', 'Yangi Bozor (Dehqon)', 'Andijon Vokzali', 'Bobur Bog‘i'].map((place) => (
+              <button
+                key={place}
+                type="button"
+                onClick={() => {
+                  setToInput(place)
+                  executeSearch(fromInput, place)
+                }}
+                className="px-2 py-0.5 rounded-lg bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 text-neutral-600 text-[11px] font-medium whitespace-nowrap transition-colors"
+              >
+                {place}
+              </button>
+            ))}
+          </div>
+        </form>
+      </section>
+
+      {/* Active Route Header Summary */}
+      <div className="bg-white rounded-2xl p-3.5 border border-neutral-200 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-neutral-800">
           <span className="text-blue-600 font-bold">{fromParam}</span>
           <i className="ri-arrow-right-line text-neutral-400"></i>
           <span className="text-red-600 font-bold">{toParam}</span>
         </div>
-        <button
-          onClick={() => navigate('/')}
-          className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1"
-        >
-          <i className="ri-edit-line"></i>
-          <span>O‘zgartirish</span>
-        </button>
+        <div className="text-[11px] text-neutral-500 font-medium">
+          {loading ? 'Yo‘nalishlar hisoblanmoqda...' : `${filteredItineraries.length} ta variant topildi`}
+        </div>
       </div>
 
-      {/* Filter Tabs */}
-            <div className="mb-3 flex gap-2">
-              <SearchInput
-                placeholder="Qayerga bormoqchisiz?"
-                value={query}
-                onChange={(e) => setQuery((e.target as HTMLInputElement).value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSearch(query)
-                }}
-              />
-              <button
-                type="button"
-                className="px-3 py-2 bg-blue-600 text-white rounded-lg"
-                onClick={() => handleSearch(query)}
-              >
-                Qidirish
-              </button>
-            </div>
-
-            <RouteFilterTabs
+      {/* Filter Tabs (Fastest, Cheapest, Least Walking, Least Transfers) */}
+      <RouteFilterTabs
         activeMode={selectedMode}
         onSelectMode={(mode) => {
           setSelectedMode(mode)
@@ -195,7 +334,7 @@ export default function Search() {
         }}
       />
 
-      {/* Mobile view segmented control */}
+      {/* Mobile view segmented control [ Ro‘yxat | Xarita ] */}
       <div className="flex lg:hidden bg-neutral-200/70 p-1 rounded-xl text-xs font-semibold">
         <button
           type="button"
@@ -223,16 +362,19 @@ export default function Search() {
         </button>
       </div>
 
-      {/* Desktop Responsive Split Layout */}
+      {/* Responsive Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* Left column: Itinerary Cards & Detailed Steps */}
-        <div className={`lg:col-span-6 space-y-4 ${mobileView === 'map' ? 'hidden lg:block' : 'block'}`}>
-          <h2 className="text-sm font-bold text-neutral-800 flex items-center justify-between">
-            <span>{uz.alternatives.title}</span>
+        {/* Left column: Itinerary Cards & Step-by-Step Breakdown */}
+        <div className={`lg:col-span-6 space-y-3.5 ${mobileView === 'map' ? 'hidden lg:block' : 'block'}`}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs sm:text-sm font-bold text-neutral-800 flex items-center gap-1.5">
+              <i className="ri-route-line text-blue-600"></i>
+              <span>{uz.alternatives.title}</span>
+            </h2>
             <span className="text-xs font-normal text-neutral-500">
               {filteredItineraries.length} ta natija
             </span>
-          </h2>
+          </div>
 
           {loading ? (
             <div className="space-y-3">
@@ -243,7 +385,7 @@ export default function Search() {
           ) : filteredItineraries.length === 0 ? (
             <EmptyState
               title={uz.search.noResults}
-              description="Boshqa filtrni tanlang yoki manzillarni tekshiring"
+              description="Boshqa manzilni tanlang yoki filtrni o‘zgartiring"
             />
           ) : (
             <div className="space-y-3" data-testid="itineraries-list">
@@ -262,15 +404,17 @@ export default function Search() {
           {selectedItinerary && (
             <div className="pt-2 space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-neutral-900">
-                  {uz.routeDetails.title} (Bosqichma-bosqich)
+                <h3 className="text-xs sm:text-sm font-bold text-neutral-900 flex items-center gap-1.5">
+                  <i className="ri-footprint-line text-blue-600"></i>
+                  <span>{uz.routeDetails.title} (Bosqichma-bosqich)</span>
                 </h3>
                 {selectedItinerary.routeNumbers.length > 0 && (
                   <button
                     onClick={() => navigate(`/route/${selectedItinerary.routeNumbers[0]}`)}
-                    className="text-xs font-semibold text-blue-600 hover:underline"
+                    className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-0.5"
                   >
-                    Jonli kuzatuv sahifasi →
+                    <span>{selectedItinerary.routeNumbers[0]}-marshrut jonli kuzatuvi</span>
+                    <i className="ri-arrow-right-line"></i>
                   </button>
                 )}
               </div>
@@ -288,12 +432,12 @@ export default function Search() {
                 <span>Tanlangan yo‘nalish xaritasi</span>
               </span>
               {selectedItinerary && (
-                <span className="text-xs font-bold text-blue-700">
-                  {selectedItinerary.totalDurationMinutes} daqiqa
+                <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100">
+                  {selectedItinerary.totalDurationMinutes} daqiqa (~{selectedItinerary.totalFareSoM.toLocaleString('uz-UZ')} so‘m)
                 </span>
               )}
             </div>
-            <div className="h-80 sm:h-[480px] w-full relative">
+            <div className="h-80 sm:h-[460px] w-full relative">
               <AppMap ref={mapRef} onMapReady={handleMapReady} />
             </div>
           </div>
