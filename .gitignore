@@ -10,3 +10,5 @@ backend/app.db
 /.idea
 .vscode
 .DS_Store
+.pytest_cache/
+.venv/
