@@ -1,0 +1,408 @@
+/* ═══════════════════════════════════════════════════
+   Driver Live Map — Stage 2
+   ═══════════════════════════════════════════════════ */
+
+.driver-map-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin: -1rem; /* Offset parent padding to go full-bleed */
+  overflow: hidden;
+}
+
+/* ── Map container ── */
+.driver-map-container {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+
+.driver-map-container .maplibregl-map {
+  width: 100%;
+  height: 100%;
+}
+
+/* Fix maplibre popup styling for dark theme */
+.driver-map-container .maplibregl-popup-content {
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+}
+
+.driver-map-container .maplibregl-popup-tip {
+  border-top-color: var(--surface-elevated);
+}
+
+.driver-map-container .maplibregl-popup-close-button {
+  color: var(--text-tertiary);
+}
+
+/* ── Connection status bar ── */
+.map-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  z-index: 10;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+}
+
+.map-status-bar__indicator {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.map-status-bar--connected {
+  color: var(--success);
+}
+
+.map-status-bar--connected .map-status-bar__indicator {
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.map-status-bar--connecting,
+.map-status-bar--reconnecting {
+  color: var(--warning);
+}
+
+.map-status-bar--connecting .map-status-bar__indicator,
+.map-status-bar--reconnecting .map-status-bar__indicator {
+  background: var(--warning);
+  animation: pulse-glow 1s ease-in-out infinite;
+}
+
+.map-status-bar--disconnected {
+  color: var(--danger);
+}
+
+.map-status-bar--disconnected .map-status-bar__indicator {
+  background: var(--danger);
+}
+
+.map-status-bar__badge {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: var(--accent-subtle);
+  color: var(--accent-primary);
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 700;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Route info pill ── */
+.map-route-pill {
+  position: absolute;
+  top: 3.25rem;
+  left: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  z-index: 5;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.map-route-pill i {
+  color: var(--accent-primary);
+  font-size: 1rem;
+}
+
+.map-route-pill__number {
+  font-weight: 800;
+  color: var(--accent-primary);
+  font-size: 0.875rem;
+}
+
+.map-route-pill__name {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* ── Parking status panel ── */
+.map-parking-panel {
+  position: absolute;
+  bottom: 0.75rem;
+  left: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+  z-index: 5;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 0.25rem;
+}
+
+.map-parking-card {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.625rem;
+  padding: 0.5rem 0.75rem;
+  min-width: 180px;
+  flex-shrink: 0;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+  transition: border-color 0.3s ease;
+}
+
+.map-parking-card--inside {
+  border-color: var(--success);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.map-parking-card__icon {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  background: var(--warning-subtle);
+  color: var(--warning);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.125rem;
+  flex-shrink: 0;
+}
+
+.map-parking-card--inside .map-parking-card__icon {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.map-parking-card__info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.map-parking-card__name {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-parking-card__count {
+  font-size: 0.625rem;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.map-parking-card__inside-badge {
+  background: var(--success-subtle);
+  color: var(--success);
+  padding: 0 0.375rem;
+  border-radius: 999px;
+  font-size: 0.5625rem;
+  font-weight: 700;
+}
+
+/* ── Legend ── */
+.map-legend {
+  position: absolute;
+  top: 3.25rem;
+  right: 3.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.625rem;
+  z-index: 5;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.map-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.map-legend__color {
+  width: 1rem;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.map-legend__color--client {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #f97316;
+  box-shadow: 0 0 4px #f97316;
+}
+
+/* ── Waiting client markers ── */
+.waiting-client-marker {
+  position: relative;
+  width: 2rem;
+  height: 2rem;
+  cursor: pointer;
+}
+
+.waiting-client-marker__pulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2rem;
+  height: 2rem;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(249, 115, 22, 0.25);
+  animation: client-pulse 2s ease-out infinite;
+}
+
+.waiting-client-marker__dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f97316, #ea580c);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.625rem;
+  box-shadow: 0 2px 8px rgba(249, 115, 22, 0.4);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+@keyframes client-pulse {
+  0% {
+    transform: translate(-50%, -50%) scale(0.5);
+    opacity: 0.6;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(2);
+    opacity: 0;
+  }
+}
+
+/* ── Client popup ── */
+.client-popup {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  color: #f97316;
+}
+
+.client-popup__time {
+  color: var(--text-tertiary);
+  font-weight: 400;
+  font-size: 0.6875rem;
+}
+
+/* ── Map error overlay ── */
+.map-error-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  background: var(--bg-primary);
+  color: var(--danger);
+  z-index: 20;
+}
+
+.map-error-overlay i {
+  font-size: 2.5rem;
+}
+
+.map-error-overlay p {
+  font-size: 0.875rem;
+  text-align: center;
+  max-width: 280px;
+  color: var(--text-secondary);
+}
+
+/* ── MapLibre control overrides for dark theme ── */
+.driver-map-container .maplibregl-ctrl-group {
+  background: var(--surface-elevated) !important;
+  border: 1px solid var(--border-subtle) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+}
+
+.driver-map-container .maplibregl-ctrl-group button {
+  background-color: transparent !important;
+  border-bottom-color: var(--border-subtle) !important;
+}
+
+.driver-map-container .maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--border-subtle) !important;
+}
+
+.driver-map-container .maplibregl-ctrl-icon {
+  filter: invert(0.85);
+}
+
+.driver-map-container .maplibregl-ctrl-attrib {
+  background: rgba(10, 14, 26, 0.7) !important;
+  color: var(--text-tertiary) !important;
+  font-size: 0.5625rem !important;
+}
+
+.driver-map-container .maplibregl-ctrl-attrib a {
+  color: var(--text-secondary) !important;
+}
+
+/* ── Responsive ── */
+@media (max-width: 400px) {
+  .map-route-pill__name {
+    display: none;
+  }
+
+  .map-legend {
+    font-size: 0.5625rem;
+  }
+
+  .map-parking-card {
+    min-width: 150px;
+    padding: 0.375rem 0.5rem;
+  }
+}

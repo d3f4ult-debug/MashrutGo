@@ -1,0 +1,207 @@
+.login-page {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  padding: 1.5rem;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, var(--accent-subtle) 0%, transparent 60%);
+}
+
+.login-container {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ── Brand ── */
+.login-brand {
+  text-align: center;
+}
+
+.login-brand__logo {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 1.25rem;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  margin: 0 auto 0.75rem;
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.25);
+}
+
+.login-brand h1 {
+  font-size: 1.625rem;
+  font-weight: 800;
+  margin: 0;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.login-brand p {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  margin: 0.25rem 0 0;
+}
+
+/* ── Form ── */
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 1rem;
+  padding: 1.5rem;
+}
+
+.login-form__field label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.375rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.login-form__input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.625rem;
+  padding: 0 0.875rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.login-form__input-wrap:focus-within {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.login-form__input-wrap i {
+  color: var(--text-tertiary);
+  font-size: 1.125rem;
+}
+
+.login-form__input-wrap input {
+  flex: 1;
+  border: none;
+  background: none;
+  padding: 0.6875rem 0;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  outline: none;
+  font-family: inherit;
+}
+
+.login-form__input-wrap input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.login-form__error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.875rem;
+  background: var(--danger-subtle);
+  color: var(--danger);
+  border-radius: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.login-form__submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: white;
+  border: none;
+  border-radius: 0.625rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+  font-family: inherit;
+}
+
+.login-form__submit:hover {
+  opacity: 0.92;
+}
+
+.login-form__submit:active {
+  transform: scale(0.98);
+}
+
+.login-form__submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Dev panel ── */
+.login-dev-panel {
+  text-align: center;
+}
+
+.login-dev-panel__label {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  display: block;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+.login-dev-panel__buttons {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.login-dev-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+  color: var(--text-secondary);
+}
+
+.login-dev-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.login-dev-btn--driver:hover {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.login-dev-btn--uyushma:hover {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.login-dev-btn--admin:hover {
+  border-color: var(--admin-accent);
+  color: var(--admin-accent);
+}

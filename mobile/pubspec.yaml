@@ -1,0 +1,40 @@
+name: mashrutgo_mobile
+description: "MashrutGo Driver & Operations Native Flutter WebView Wrapper + FCM Bridge"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Core WebView
+  webview_flutter: ^4.10.0
+
+  # Push Notifications (FCM)
+  firebase_core: ^3.10.0
+  firebase_messaging: ^15.2.0
+  flutter_local_notifications: ^18.0.1
+
+  # Native Hardware & Permissions
+  permission_handler: ^11.3.1
+  geolocator: ^13.0.2
+
+  # External Links & Connectivity
+  url_launcher: ^6.3.1
+  connectivity_plus: ^6.1.1
+
+  # HTTP client for backend device registration
+  http: ^1.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 
 type Marker = { id: string; lat: number; lng: number }
 
@@ -9,7 +9,7 @@ interface Props {
   onMapClick?: (lng: number, lat: number) => void
 }
 
-export default function AppMap({ center = [40.782, 72.342], zoom = 9, markers = [] }: Props) {
+export default function AppMap(_props: Props) {
   const ref = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {

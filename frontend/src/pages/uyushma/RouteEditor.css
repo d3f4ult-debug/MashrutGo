@@ -1,0 +1,488 @@
+/* ═══════════════════════════════════════════════════
+   Visual Route Editor — Stage 5 Styles
+   Interactive map, draggable waypoints, route designer
+   ═══════════════════════════════════════════════════ */
+
+.route-editor-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+/* ── Top Command Bar ── */
+.editor-top-bar {
+  height: 60px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-medium);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.25rem;
+  z-index: 20;
+  gap: 1rem;
+}
+
+.editor-top-bar__left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+}
+
+.btn-back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-back-link:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.editor-route-title-input {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.input-route-num {
+  width: 55px;
+  height: 34px;
+  text-align: center;
+  font-weight: 800;
+  font-size: 0.95rem;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--accent-primary);
+  outline: none;
+}
+
+.input-route-num:focus {
+  border-color: var(--accent-primary);
+}
+
+.input-route-name {
+  height: 34px;
+  width: 280px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0 0.75rem;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  outline: none;
+}
+
+.input-route-name:focus {
+  border-color: var(--accent-primary);
+}
+
+.editor-status-pill {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+
+.editor-status-pill.draft {
+  background: var(--warning-subtle);
+  color: var(--warning);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.editor-status-pill.published {
+  background: var(--success-subtle);
+  color: var(--success);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.unsaved-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--warning);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.editor-top-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-editor-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 34px;
+  padding: 0 0.85rem;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-editor-action:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border-medium);
+}
+
+.btn-editor-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-save-draft {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--accent-primary);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.btn-save-draft:hover {
+  background: rgba(59, 130, 246, 0.25);
+}
+
+.btn-publish {
+  background: var(--success);
+  color: #fff;
+  border: none;
+}
+
+.btn-publish:hover {
+  background: #16a34a;
+}
+
+/* ── Main Workspace Body ── */
+.editor-workspace {
+  display: flex;
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Left Sidebar (Controls & Waypoints) ── */
+.editor-sidebar {
+  width: 380px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-medium);
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3);
+}
+
+@media (max-width: 900px) {
+  .editor-sidebar {
+    width: 320px;
+  }
+}
+
+/* Direction Switcher Tabs */
+.direction-tabs-header {
+  display: flex;
+  background: var(--bg-primary);
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+  gap: 0.4rem;
+}
+
+.direction-tab-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0.55rem 0.4rem;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.direction-tab-btn.active {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
+}
+
+.direction-tab-btn__title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.direction-tab-btn__stats {
+  font-size: 0.675rem;
+  color: var(--text-tertiary);
+  margin-top: 0.15rem;
+}
+
+/* Sidebar scrollable contents */
+.editor-sidebar__content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Stats card */
+.route-stats-strip {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem 1rem;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  text-align: center;
+}
+
+.stat-box {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-box .val {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.stat-box .val.accent {
+  color: var(--accent-primary);
+}
+
+.stat-box .lbl {
+  font-size: 0.675rem;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+}
+
+/* Waypoints Sequence List */
+.points-sequence-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.point-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.65rem 0.85rem;
+  transition: all 0.2s;
+}
+
+.point-card:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-medium);
+}
+
+.point-card__left {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.point-marker-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.point-marker-dot.start {
+  background: var(--success);
+}
+
+.point-marker-dot.end {
+  background: var(--danger);
+}
+
+.point-marker-dot.waypoint {
+  background: var(--accent-primary);
+}
+
+.point-card__name-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 0.825rem;
+  font-weight: 600;
+  width: 100%;
+}
+
+.point-card__coords {
+  font-size: 0.675rem;
+  color: var(--text-tertiary);
+  font-family: monospace;
+}
+
+.point-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.btn-point-icon {
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0.2rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.btn-point-icon:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.btn-point-icon.delete:hover {
+  color: var(--danger);
+}
+
+/* Add waypoint button */
+.btn-add-waypoint-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px dashed rgba(59, 130, 246, 0.35);
+  border-radius: var(--radius-md);
+  color: var(--accent-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-add-waypoint-strip:hover {
+  background: rgba(59, 130, 246, 0.16);
+  border-color: var(--accent-primary);
+}
+
+/* ── Map Canvas ── */
+.editor-map-canvas {
+  flex: 1;
+  position: relative;
+  background: #0a0e1a;
+}
+
+.editor-map-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* Floating Helper Notification on Map */
+.map-floating-instructions {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 20, 36, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-medium);
+  border-radius: 9999px;
+  padding: 0.45rem 1rem;
+  font-size: 0.775rem;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.map-floating-instructions i {
+  color: var(--accent-primary);
+  font-size: 0.95rem;
+}
+
+/* ── Custom HTML Map Markers ── */
+.map-marker-pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+  cursor: grab;
+  color: #fff;
+  font-weight: 800;
+  border: 2px solid #fff;
+  transition: transform 0.15s ease;
+}
+
+.map-marker-pin:hover {
+  transform: scale(1.15);
+}
+
+.map-marker-pin:active {
+  cursor: grabbing;
+}
+
+.map-marker-pin.start {
+  background: #22c55e;
+  width: 32px;
+  height: 32px;
+  font-size: 0.85rem;
+}
+
+.map-marker-pin.end {
+  background: #ef4444;
+  width: 32px;
+  height: 32px;
+  font-size: 0.85rem;
+}
+
+.map-marker-pin.waypoint {
+  background: #3b82f6;
+  width: 28px;
+  height: 28px;
+  font-size: 0.75rem;
+}

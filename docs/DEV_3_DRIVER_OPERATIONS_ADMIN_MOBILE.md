@@ -13,20 +13,18 @@ Starter kitdan role-aware layouts yarat:
 - `/admin/*`
 Unauthorized role routega kira olmasin. Mobile Driver UI birinchi darajali; Uyushma/Admin desktop-first, ammo mobile responsive.
 
-## Stage 1 — Driver PWA
-Driver login; self-registration UI bo‘lmasin. Dashboardda assigned route/vehicle summary (optional metadata bo‘sh bo‘lishi mumkin).
-
-Actions:
-- Start Shift
-- active shift status/timer
-- End Shift
-- GPS permission/status
-- connection/offline queue status
-
-Start Shiftdan keyin location periodik Dev1 APIga yuborilsin. Internet uzilganda IndexedDB/local durable queuega timestamped GPS points yoz; reconnectda batch sync, idempotency IDs bilan. Battery/networkni hisobga olib sensible interval; interval backend/configdan olinishi afzal.
+ 
 
 ## Stage 2 — Driver live map + waiting clients
-Driver mapda assigned route geometry va shu route’ni `Kutayapman` holatida kuzatayotgan barcha clientlarning exact GPS nuqtalari realtime ko‘rinsin. Client `Mashinadaman` qilishi bilan marker event orqali yo‘qolsin. Client identity/PII kerak emas; marker/session ID yetarli.
+Driver mapda assigned route geometry va shu route’ni `Kutayapman` holatida kuzatayotgan barcha clientlarning exact GPS nuqtalari realtime ko‘rinsin. Client `Mashinadaman` qilishi bilan marker event orqali yo‘qolsin. Client identity/PII kerak emas; marker/
+
+
+
+
+
+
+
+session ID yetarli.
 
 Parking geofence statusni backenddan ko‘rsatish mumkin: “stoyanka hududida” va current count. Driver qo‘lda stoyankadaman bosmaydi.
 
@@ -96,8 +94,7 @@ PWA stable bo‘lgach minimal Flutter wrapper:
 - notification tap → appropriate web route/deep-link
 - loading/error/offline shell
 
-Business logicni Flutterga duplicate qilma. Web/PWA source-of-truth; Flutter native capabilities bridge/container vazifasida.
-
+Business logicni Flutterga duplicate qilma. Web/PWA source-of-truth; Flutter native capabilities bridge/containe
 ## Stage 10 — Tests & delivery
 Driver: shift, GPS permission, offline queue/sync, waiting-client marker lifecycle, payment refund, cashout.
 Uyushma: driver CRUD, assignment validation, route editor, direction save, fare, cashout approval.
