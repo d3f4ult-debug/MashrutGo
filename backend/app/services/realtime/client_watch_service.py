@@ -232,8 +232,8 @@ class ClientWatchService:
             "watch_id": watch.id,
             "status": watch.status,
             "ride_state": ride_state.state if ride_state else None,
-            "boarded_at": ride_state.boarded_at if ride_state else None,
-            "exited_at": ride_state.exited_at if ride_state else None,
+            "boarded_at": ride_state.boarded_at.isoformat() if (ride_state and ride_state.boarded_at) else None,
+            "exited_at": ride_state.exited_at.isoformat() if (ride_state and ride_state.exited_at) else None,
         }
 
     async def sweep_expired_watches(self, db: Session) -> List[int]:

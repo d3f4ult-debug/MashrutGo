@@ -14,6 +14,7 @@ from app.schemas.routing import (
     RouteSearchResponse,
 )
 from app.services.routing.maptiler_adapter import haversine_distance
+from app.services.routing.eta_service import eta_service
 
 WALKING_SPEED_M_PER_MIN = 75.0  # ~4.5 km/h
 TRANSIT_SPEED_M_PER_MIN = 500.0  # ~30 km/h
@@ -90,11 +91,11 @@ class GraphRouter:
                     })
 
         # 3. Direct Transit Itineraries (0 transfers)
-        direct_transit = cls._find_direct_transit_itineraries(origin, destination, route_directions_data)
+        direct_transit = cls._find_direct_transit_itineraries(origin, destination, route_directions_data, db)
         candidates.extend(direct_transit)
 
         # 4. 1-Transfer Transit Itineraries
-        transfer_transit = cls._find_transfer_transit_itineraries(origin, destination, route_directions_data)
+        transfer_transit = cls._find_transfer_transit_itineraries(origin, destination, route_directions_data, db)
         candidates.extend(transfer_transit)
 
         # 5. Multi-criteria Evaluation & Ranking
@@ -174,6 +175,7 @@ class GraphRouter:
         origin: CoordinateInput,
         destination: CoordinateInput,
         route_directions: List[Dict[str, Any]],
+        db: Session,
     ) -> List[Itinerary]:
         """Find single-vehicle transit routes with walking connectors."""
         results = []
@@ -221,7 +223,26 @@ class GraphRouter:
                         transit_duration_mins = max(2, int(round(transit_dist_m / TRANSIT_SPEED_M_PER_MIN)))
                         walk_to_board_mins = int(round(walk_to_board_m / WALKING_SPEED_M_PER_MIN))
                         walk_from_alight_mins = int(round(walk_from_alight_m / WALKING_SPEED_M_PER_MIN))
-                        total_duration_mins = walk_to_board_mins + wait_mins + transit_duration_mins + walk_from_alight_mins
+
+                        # Map-matched ETA from live approaching vehicles
+                        eta = eta_service.calculate_eta(
+                            route_id=route.id,
+                            direction_type=direction.direction_type,
+                            stop_lat=board_stop.lat,
+                            stop_lng=board_stop.lng,
+                            db=db,
+                            stop_name=board_stop.name,
+                        )
+                        if eta.has_approaching_vehicle:
+                            actual_wait_mins = max(1, eta.eta_minutes or 1)
+                            actual_live_status = "online_vehicles_visible"
+                            actual_confidence = max(confidence, eta.confidence)
+                        else:
+                            actual_wait_mins = wait_mins
+                            actual_live_status = live_status
+                            actual_confidence = confidence
+
+                        total_duration_mins = walk_to_board_mins + actual_wait_mins + transit_duration_mins + walk_from_alight_mins
 
                         legs = [
                             ItineraryLeg(
@@ -254,7 +275,7 @@ class GraphRouter:
                                 fare_uzs=fare_uzs,
                                 stops_count=j - i,
                                 polyline=json.dumps({"type": "LineString", "coordinates": transit_coords}),
-                                live_status=live_status,
+                                live_status=actual_live_status,
                             ),
                             ItineraryLeg(
                                 leg_type="walking",
@@ -282,11 +303,11 @@ class GraphRouter:
                             walking_distance_meters=total_walk_m,
                             walking_duration_minutes=walk_to_board_mins + walk_from_alight_mins,
                             transit_duration_minutes=transit_duration_mins,
-                            wait_duration_minutes=wait_mins,
+                            wait_duration_minutes=actual_wait_mins,
                             transfers_count=0,
                             total_fare_uzs=fare_uzs,
-                            live_status=live_status,
-                            live_confidence=confidence,
+                            live_status=actual_live_status,
+                            live_confidence=actual_confidence,
                             legs=legs,
                         )
 
@@ -301,11 +322,10 @@ class GraphRouter:
         origin: CoordinateInput,
         destination: CoordinateInput,
         route_directions: List[Dict[str, Any]],
+        db: Session,
     ) -> List[Itinerary]:
-        """Find 2-leg transit routes connected by a transfer walking link."""
+        """Find 2-vehicle transit routes with 1 transfer between lines."""
         results = []
-        if len(route_directions) < 2:
-            return results
 
         # Compare pairs of distinct routes
         for r1_data in route_directions:
@@ -359,17 +379,35 @@ class GraphRouter:
                             walk_to_r1_mins = int(round(walk_to_r1_m / WALKING_SPEED_M_PER_MIN))
                             walk_from_r2_mins = int(round(walk_from_r2_m / WALKING_SPEED_M_PER_MIN))
 
-                            total_wait_mins = r1_data["wait_time_mins"] + r2_data["wait_time_mins"]
+                            # ETA for first leg
+                            eta1 = eta_service.calculate_eta(
+                                route_id=r1.id,
+                                direction_type=r1_data["direction"].direction_type,
+                                stop_lat=r1_board_stop.lat,
+                                stop_lng=r1_board_stop.lng,
+                                db=db,
+                                stop_name=r1_board_stop.name,
+                            )
+                            if eta1.has_approaching_vehicle:
+                                actual_r1_wait = max(1, eta1.eta_minutes or 1)
+                                r1_live_status = "online_vehicles_visible"
+                                r1_conf = max(r1_data["confidence"], eta1.confidence)
+                            else:
+                                actual_r1_wait = r1_data["wait_time_mins"]
+                                r1_live_status = r1_data["live_status"]
+                                r1_conf = r1_data["confidence"]
+
+                            total_wait_mins = actual_r1_wait + r2_data["wait_time_mins"]
                             total_walk_m = walk_to_r1_m + transfer_walk_m + walk_from_r2_m
                             total_duration_mins = (
-                                walk_to_r1_mins + r1_data["wait_time_mins"] + r1_transit_mins
+                                walk_to_r1_mins + actual_r1_wait + r1_transit_mins
                                 + transfer_walk_mins + r2_data["wait_time_mins"] + r2_transit_mins
                                 + walk_from_r2_mins
                             )
 
-                            has_live_both = r1_data["has_live"] and r2_data["has_live"]
+                            has_live_both = (r1_live_status == "online_vehicles_visible") and r2_data["has_live"]
                             overall_live_status = "online_vehicles_visible" if has_live_both else "no_online_vehicle_visible"
-                            overall_confidence = min(r1_data["confidence"], r2_data["confidence"])
+                            overall_confidence = min(r1_conf, r2_data["confidence"])
 
                             legs = [
                                 ItineraryLeg(
@@ -382,7 +420,7 @@ class GraphRouter:
                                     duration_minutes=walk_to_r1_mins,
                                     fare_uzs=0,
                                     live_status="online_vehicles_visible",
-                                ),
+                                 ),
                                 ItineraryLeg(
                                     leg_type="transit",
                                     route_id=r1.id,
@@ -397,7 +435,7 @@ class GraphRouter:
                                     duration_minutes=r1_transit_mins,
                                     fare_uzs=r1_data["fare_uzs"],
                                     stops_count=r1_alight_idx - best_r1_board_idx,
-                                    live_status=r1_data["live_status"],
+                                    live_status=r1_live_status,
                                 ),
                                 ItineraryLeg(
                                     leg_type="walking",
