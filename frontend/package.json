@@ -2,12 +2,14 @@
   "name": "andijon-transport-frontend",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint ./src --ext .ts,.tsx",
-    "test": "vitest"
+    "test": "vitest",
+    "test:dev3": "npx tsx --test src/tests/*.test.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "4.35.0",
