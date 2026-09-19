@@ -1,14 +1,13 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  appType: 'spa',
   plugins: [react()],
-  server: { port: 5173 },
   resolve: {
     alias: [{ find: '@', replacement: '/src' }]
   },
   test: {
+    globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/setupTests.ts']
   }

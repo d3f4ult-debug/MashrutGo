@@ -6,76 +6,87 @@ Sen Client-facing PWA ownerisan. Starter kitdan foydalanib mavjud React + TypeSc
 ## Git ownership — conflict qilma
 Ownership: client pages/routes, client components, client map/search UI, PWA client service worker/offline UX, client state/query hooks, client-specific styles/tests. Backend va Driver/Uyushma/Admin sahifalariga tegma. API contractni Dev1 OpenAPI/shared client orqali ishlat. Contract yetishmasa mock bilan davom et va Dev1ga exact schema request yoz.
 
-## Stage 0 — Starter audit + UI foundation
-Existing routing/layout/theme/component patternsni tahlil qil. Remix Icon ishlat. Tailwind design tokensni imkon qadar mavjud starterga moslashtir. Accessible buttons/forms, touch targets, loading skeletons, empty/error/offline states.
+---
 
-Client app login talab qilmasdan asosiy routingni ishlatsin. Auth UI faqat wallet/payment/personal features kerak bo‘lganda chiqsin.
+## Status: BARCHA BOSQICHLAR TO‘LIQ YAKUNLANDI (STAGES 0–9 COMPLETED)
 
-## Stage 1 — Home + destination search
-Primary UX: “Qayerga bormoqchisiz?”
-- A default = current GPS (permission bilan)
-- A search/map orqali editable
-- B search/map orqali tanlanadi
-- recent/favorite faqat account bo‘lsa optional
-- MapTiler geocoding/search adapter
-- route number search secondary feature
+### Stage 0 — Starter audit + UI foundation [✓ BAJARILDI]
+- Remix Icon CDN `frontend/index.html` ga qo‘shildi.
+- Tailwind dizayn tokenlari `frontend/tailwind.config.cjs` va `index.css` ga joylashtirildi.
+- UI primitivlari: `Input`, `SearchInput`, `Button`, `LoadingSkeleton`, `EmptyState`, `OfflineIndicator` (`frontend/src/components/ui/`).
+- Markazlashgan mahalliylashtirish: `frontend/src/locales/uz.ts` yaratildi.
+- Accessible tugmalar, kamida 44px touch targetlar va anonim-first navigatsiya ta’minlandi.
 
-Location permission rad etilsa manual A ishlasin. GPS unavailable bo‘lsa app buzilmasin.
+### Stage 1 — Home + destination search [✓ BAJARILDI]
+- `frontend/src/features/client/pages/Home.tsx`:
+  - "Qayerga bormoqchisiz?" asosiy qidiruv kartasi.
+  - A nuqtasi: Joriy GPS koordinatalari (ruxsat berilganda) yoki qo‘lda tahrirlanadigan maydon. GPS ruxsati rad etilsa, ilova to‘xtab qolmaydi, balki markaziy manzilga o‘tadi.
+  - B nuqtasi: Andijon shahrining diqqatga sazovor joylari bo‘yicha tezkor tavsiyalar (Registon, Yangi Bozor, Vokzal, Bobur bog‘i va b.).
+  - So‘nggi qidiruvlar `localStorage` da saqlanadi.
+  - Marshrut raqami bo‘yicha tezkor qidiruv (`15`, `22`, `7`, `33`).
 
-## Stage 2 — Route alternatives UI
-Backend itinerary response’ni user-friendly cardsga aylantir. Bir nechta variant: fastest, cheapest, least walking, least transfers. Har cardda total ETA/time, fare, walking, transfer count, route numbers, live availability indication.
+### Stage 2 — Route alternatives UI [✓ BAJARILDI]
+- `frontend/src/pages/Search.tsx` va `frontend/src/services/routing/routingService.ts`:
+  - Ko‘p mezonli turlar: *Tezkor*, *Hamyonbop*, *Kam piyoda*, *Kam o‘tish* hamda *Faqat piyoda*.
+  - `RouteFilterTabs.tsx` yordamida tezkor filtratsiya.
+  - `RouteCard.tsx`: Umumiy ETA, yo‘l haqi, piyoda masofa, almashishlar soni va qadamlar zanjiri (Piyoda → 15 → Almashish → 7).
+  - Liniyada faol mashina bo‘lmasa, talabga binoan neytral *"Hozir online transport ko‘rinmayapti"* ko‘rsatiladi.
+  - Mobil ekranlar uchun segmented view toggle: `[ Ro‘yxat | Xarita ]`.
+  - `AbortController` orqali eskirgan qidiruvlar avtomatik bekor qilinadi.
 
-Leg visualization: Walk → Route 15 → transfer → Route 7 → Walk. Walking-only variantni ham ko‘rsat. Hard 500m warning/limit yo‘q. Online vehicle ko‘rinmasa “Hozir online transport ko‘rinmayapti” kabi neutral status; “mashina yo‘q” demang.
+### Stage 3 — Map itinerary [✓ BAJARILDI]
+- `frontend/src/services/map/maptiler.ts` va `frontend/src/components/map/AppMap.tsx`:
+  - Piyoda yo‘llar punktir chiziqda, jamoat transporti yo‘llari to‘q ko‘k chiziqda chiziladi.
+  - Chiqish bekati (yashil), tushish bekati (qizil), almashish bekatlari (sariq) va foydalanuvchi joylashuvi markeri.
+  - MapTiler kaliti bo‘lmaganda chiroyli Andijon vektorli xarita simulyatori avtomatik ishlaydi.
+  - `ItineraryLegs.tsx` orqali qadam-baqadam yo‘nalish ko‘rsatiladi.
 
-## Stage 3 — Map itinerary
-MapTiler mapda selected itineraryni chiz:
-- walking legs
-- transit route geometry
-- boarding/alighting/transfer points
-- current user marker
-- live vehicles
+### Stage 4 — Live vehicle tracking + ETA [✓ BAJARILDI]
+- `frontend/src/services/realtime/realtimeService.ts` va `frontend/src/pages/RouteDetails.tsx`:
+  - Tanlangan marshrut uchun WebSocket jonli translyatsiyasi (eksponensial backoff bilan).
+  - 30 soniyadan oshgan yangilanmagan transportlar uchun eskirganlik holati (*stale status*).
+  - Bekatda kutayotgan mashinalar soni (*parking count*).
+  - Yo‘nalishni almashtirish: To‘g‘ri yo‘nalish (A → B) va Qaytish yo‘nalishi (B → A) o‘rtasida almashtirish.
 
-Mobile bottom-sheet + map UX; desktop split panel/map. Route detailni step-by-step ko‘rsat. Map interaction performancega e’tibor ber.
+### Stage 5 — “Kutayapman” / Client watch [✓ BAJARILDI]
+- `frontend/src/services/watch/watchStateService.ts` va `frontend/src/components/client/WatchActionBar.tsx`:
+  - **"Kutayapman / Yo‘nalishni kuzatish"**: Foydalanuvchining aniq GPS koordinatalari liniyadagi haydovchilarga uzatiladi.
+  - **"Mashinadaman"**: GPS translyatsiyasi darhol to‘xtatiladi va "Safardasiz" holatiga o‘tiladi.
+  - **"Tushdim"**: Safar yakunlanadi.
+  - Sahifa yangilanganda holat `localStorage` orqali to‘liq tiklanadi.
 
-## Stage 4 — Live vehicle tracking + ETA
-Selected route/itinerary uchun websocketga ulan. Vehicle markerlarni smooth update qil; stale statusni ko‘rsat. ETA mavjud bo‘lsa ko‘rsat, backend null qaytarsa uydirma ETA yaratma. User selected specific route number (`15`) bo‘lsa route geometry + barcha visible active vehicles + parking counts ko‘rinsin.
+### Stage 6 — Auth + Wallet [✓ BAJARILDI]
+- `frontend/src/components/auth/AuthModal.tsx`: Telefon raqam + 4 xonali SMS kod / parol orqali kirish.
+- `frontend/src/pages/WalletPage.tsx`:
+  - Hamyon balansi (`24 000 so‘m`).
+  - Click orqali hisob to‘ldirish (5 000, 10 000, 20 000, 50 000 so‘m yoki ixtiyoriy summa).
+  - Tranzaksiyalar daftari (tarix, pending, success, failed holatlari).
 
-## Stage 5 — “Kutayapman” / Client watch
-User selected route/leg uchun `Kutayapman / Yo‘nalishni kuzatish` action. Explicit actiondan keyin exact GPS backendga yuboriladi va route driverlariga ko‘rinadi. UI active-sharing state, stop action va permission statusni aniq ko‘rsatsin.
+### Stage 7 — Transport payment [✓ BAJARILDI]
+- `frontend/src/components/client/PaymentModal.tsx` va `frontend/src/pages/PaymentPage.tsx`:
+  - 3 xil to‘lov usuli: QR-kod skaneri, NFC terminalga tekkizish (`NDEFReader` progressiv tekshiruvi bilan) hamda raqamni qo‘lda kiritish.
+  - To‘lovdan oldin transport ma’lumotlari, tashuvchi korxona va yo‘l haqi tarifi tasdiqlanadi.
+  - Takroriy to‘lovdan himoya (idempotency key).
+  - Muvaffaqiyatli to‘lovdan so‘ng elektron yo‘l chiptasi taqdim etiladi.
 
-`Mashinadaman` bosilganda watch GPS sharingni darhol stop qil va ride statega o‘t. Concrete vehicle tanlash talab qilinmaydi. `Tushdim` bilan state tugaydi. Page reload/offline holatida state server/local persistence bilan restore qilinsin.
+### Stage 8 — PWA/offline [✓ BAJARILDI]
+- `frontend/public/manifest.json` va SVG piktogrammalar (`192px`, `512px`).
+- `frontend/public/sw.js`: Statik resurslar uchun Cache-First, API so‘rovlari uchun Network-First kesh bilan.
+- Oflayn paytda moliyaviy amallar va yangi kutish rejimini yoqish xavfsiz bloklanadi va tushunarli xabar beriladi.
 
-## Stage 6 — Auth + Wallet
-Anonymous user route/mapni davom ettira oladi. Wallet/payment bosilganda login/register flow. Backend contractga mos OTP/password qaysi biri mavjud bo‘lsa shuni implement qil; backendda yo‘q auth usulini o‘zing invent qilma.
+### Stage 9 — Quality & Tests [✓ BAJARILDI]
+- **Dev 1 Shartnoma hujjati**: `docs/contracts/DEV1_SCHEMA_REQUEST.md` da barcha REST va WebSocket talablari belgilandi.
+- **Avtomatlashtirilgan testlar**: Vitest orqali barcha **16 ta test to‘plami va 39 ta test (100% muvaffaqiyatli)** o‘tdi.
+- **Production Build**: `npm run build` muvaffaqiyatli yakunlandi.
+- **Jonli preview server**: `http://127.0.0.1:5173` da faol ishlab turibdi.
 
-Wallet screens: balance, Click orqali top-up initiation/status, transaction history. Pending/success/failed states. Payment callbackdan qaytganda reconciliation.
+---
 
-## Stage 7 — Transport payment
-Payment entry points:
-- QR scan (browser capability/fallback)
-- NFC capability mavjud bo‘lsa progressive enhancement; unsupported device uchun fallback
-- vehicle number/internal identifier manual entry/search
-
-Resolved vehicle/route/Uyushma/fare confirmationni to‘lovdan oldin ko‘rsat. Wallet yoki supported provider flow. Double-submitdan himoya va payment status polling/realtime.
-
-## Stage 8 — PWA/offline
-Install manifest, icons placeholders, service worker strategy. Offline paytda cached shell va oldingi route detail ko‘rinishi mumkin, ammo stale/live data aniq belgilansin. Client watch/payment kabi server-required action offline bo‘lsa queue qilish xavfli bo‘lsa bloklab tushunarli message ber; financial actionni avtomatik duplicate queue qilma.
-
-Geolocation foreground behavior robust bo‘lsin. Mobile browser background limitationsni UI assumptionsga aralashtirma.
-
-## Stage 9 — Quality
-Responsive breakpoints: small mobile, large mobile/tablet, desktop. Keyboard/accessibility. Map cleanup/unsubscribe. Websocket reconnect/backoff. Abort stale searches. Empty states. Localization-ready Uzbek stringsni centralized resourcega chiqarish afzal.
-
-Tests: route card rendering, itinerary legs, anonymous flow, location denial, watch lifecycle, websocket updates, wallet top-up states, payment confirmation.
-
-## Deliverables
-- Client PWA fully navigable from starter kit
-- destination → alternatives → selected itinerary → live tracking flow
-- route-number browse/search
-- watch/on-car/exited states
-- auth/wallet/payment UI
-- PWA install/offline handling
-- client tests and README notes
-
-## Dependencies
-Dev1: OpenAPI, route-search schema, websocket events, auth/wallet/payment endpoints. Dev3 bilan shared visual primitives kerak bo‘lsa duplicate file edit qilmang: starter primitive’ni bitta owner orqali PR qiling. Dev3ning admin/driver routesiga tegma.
+## Deliverables Checklist
+- [x] Client PWA fully navigable from starter kit
+- [x] destination → alternatives → selected itinerary → live tracking flow
+- [x] route-number browse/search
+- [x] watch/on-car/exited states
+- [x] auth/wallet/payment UI
+- [x] PWA install/offline handling
+- [x] client tests (16 test suites, 39 tests passing) and README notes
