@@ -16,9 +16,9 @@ import { LiveVehicle } from '@/types/client'
 import { uz } from '@/locales/uz'
 
 export default function RouteDetails() {
-  const { id } = useParams()
+  const { id, number } = useParams()
   const navigate = useNavigate()
-  const routeNumber = id || '15'
+  const routeNumber = id || number || '15'
   const routeData: RouteOverview | null = getRouteByNumber(routeNumber)
 
   const [map, setMap] = useState<any | null>(null)

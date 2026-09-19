@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import './AdminLayout.css'
 
@@ -34,11 +34,11 @@ export function AdminLayout() {
     <div className="admin-layout">
       {/* Desktop sidebar */}
       <aside className="admin-sidebar">
-        <div className="admin-sidebar__brand">
+        <Link to="/" className="admin-sidebar__brand" title="Mijozlar ilovasiga qaytish">
           <i className="ri-shield-star-fill" />
           <span>MashrutGo</span>
           <small>Admin</small>
-        </div>
+        </Link>
 
         <nav className="admin-sidebar__nav">
           {navItems.map((item) => (

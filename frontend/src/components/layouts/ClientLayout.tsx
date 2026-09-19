@@ -49,23 +49,34 @@ export default function ClientLayout() {
           </Link>
 
           {/* Desktop Nav Links */}
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-neutral-600">
+          <nav className="hidden md:flex items-center gap-5 text-sm font-medium text-neutral-600">
             <Link to="/" className={`hover:text-blue-600 transition-colors ${location.pathname === '/' ? 'text-blue-600 font-bold' : ''}`}>
               {uz.nav.home}
             </Link>
             <Link to="/search" className={`hover:text-blue-600 transition-colors ${location.pathname.startsWith('/search') ? 'text-blue-600 font-bold' : ''}`}>
               {uz.nav.search}
             </Link>
+            <Link to="/pay" className={`hover:text-blue-600 transition-colors ${location.pathname === '/pay' ? 'text-blue-600 font-bold' : ''}`}>
+              {uz.nav.pay}
+            </Link>
             <Link to="/wallet" className={`hover:text-blue-600 transition-colors ${location.pathname === '/wallet' ? 'text-blue-600 font-bold' : ''}`}>
               {uz.nav.wallet}
             </Link>
-            <button
-              onClick={() => setIsPayModalOpen(true)}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-xs transition-colors flex items-center gap-1.5 shadow-sm"
-            >
-              <i className="ri-qr-scan-2-line"></i>
-              <span>{uz.nav.pay}</span>
-            </button>
+
+            <div className="h-4 w-px bg-neutral-200" />
+
+            {/* Portal links for quick role switching & testing */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <Link to="/driver" className="px-2 py-1 rounded bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 transition-colors">
+                Haydovchi
+              </Link>
+              <Link to="/uyushma" className="px-2 py-1 rounded bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 transition-colors">
+                Uyushma
+              </Link>
+              <Link to="/admin" className="px-2 py-1 rounded bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 transition-colors">
+                Admin
+              </Link>
+            </div>
           </nav>
 
           <div className="flex items-center gap-3">
@@ -114,9 +125,9 @@ export default function ClientLayout() {
 
           if (item.isAction) {
             return (
-              <button
+              <Link
                 key={item.to}
-                onClick={() => setIsPayModalOpen(true)}
+                to={item.to}
                 aria-label={item.label}
                 className="flex flex-col items-center justify-center min-w-[64px] min-h-[48px] text-blue-600 active:scale-95 transition-transform"
               >
@@ -124,7 +135,7 @@ export default function ClientLayout() {
                   <i className={`${item.icon} text-xl`}></i>
                 </div>
                 <span className="text-[10px] font-bold mt-0.5">{item.label}</span>
-              </button>
+              </Link>
             )
           }
 

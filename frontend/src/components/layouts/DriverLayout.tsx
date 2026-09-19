@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import './DriverLayout.css'
 
@@ -20,10 +20,10 @@ export function DriverLayout() {
     <div className="driver-layout">
       {/* Top status bar */}
       <header className="driver-header">
-        <div className="driver-header__brand">
+        <Link to="/" className="driver-header__brand" title="Mijozlar ilovasiga qaytish">
           <i className="ri-steering-2-fill" />
           <span>MashrutGo</span>
-        </div>
+        </Link>
         <div className="driver-header__user">
           <span className="driver-header__name">{user?.full_name}</span>
           <button className="driver-header__logout" onClick={handleLogout} title="Chiqish">

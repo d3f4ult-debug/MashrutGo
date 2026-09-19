@@ -69,7 +69,7 @@ export default function App() {
               <Route index element={<Home />} />
               <Route path="search" element={<Search />} />
               <Route path="route/:id" element={<RouteDetails />} />
-              <Route path="route/:number" element={<RouteOverview />} />
+              <Route path="overview/:number" element={<RouteOverview />} />
               <Route path="wallet" element={<WalletPage />} />
               <Route path="pay" element={<PaymentPage />} />
             </Route>

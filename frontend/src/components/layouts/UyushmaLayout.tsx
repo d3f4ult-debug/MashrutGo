@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import './UyushmaLayout.css'
 
@@ -31,11 +31,11 @@ export function UyushmaLayout() {
     <div className="uyushma-layout">
       {/* Desktop sidebar */}
       <aside className="uyushma-sidebar">
-        <div className="uyushma-sidebar__brand">
+        <Link to="/" className="uyushma-sidebar__brand" title="Mijozlar ilovasiga qaytish">
           <i className="ri-building-2-fill" />
           <span>MashrutGo</span>
           <small>Uyushma</small>
-        </div>
+        </Link>
 
         <nav className="uyushma-sidebar__nav">
           {navItems.map((item) => (
