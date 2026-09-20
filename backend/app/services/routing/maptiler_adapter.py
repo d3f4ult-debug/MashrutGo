@@ -1,6 +1,7 @@
 import math
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
+
 import httpx
 
 from app.core.config import settings

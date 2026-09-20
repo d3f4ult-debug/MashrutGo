@@ -3,7 +3,6 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------- wallet (client)
 
 class WalletBalanceRead(BaseModel):

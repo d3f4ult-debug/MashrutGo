@@ -2,6 +2,7 @@ import json
 import logging
 import math
 from typing import List, Optional, Tuple
+
 from sqlalchemy.orm import Session
 
 from app.models.transport import RouteDirection
@@ -110,6 +111,18 @@ def project_point_onto_polyline(
     return best_along_dist, min_perp_dist, best_proj_lat, best_proj_lng
 
 
+def _no_eta(route_id: int, direction_type: str, stop_name: Optional[str]) -> ETAResponse:
+    """The honest answer when nothing can be measured: never a fabricated arrival time."""
+    return ETAResponse(
+        route_id=route_id,
+        direction=direction_type,
+        has_approaching_vehicle=False,
+        confidence=0.0,
+        status="no_approaching_vehicle",
+        boarding_stop_name=stop_name,
+    )
+
+
 class ETAService:
     """
     Map-Matching & Real-time ETA Engine for urban transit vehicles.
@@ -146,29 +159,21 @@ class ETAService:
                 .first()
             )
         if not direction:
-            return ETAResponse(
-                route_id=route_id,
-                direction=direction_type,
-                has_approaching_vehicle=False,
-                confidence=0.0,
-                status="no_approaching_vehicle",
-                boarding_stop_name=stop_name,
-            )
+            return _no_eta(route_id, direction_type, stop_name)
 
         # 2. Extract Route Geometry
         polyline = extract_direction_polyline_coordinates(direction)
         if len(polyline) < 2:
-            return ETAResponse(
-                route_id=route_id,
-                direction=direction_type,
-                has_approaching_vehicle=False,
-                confidence=0.0,
-                status="no_approaching_vehicle",
-                boarding_stop_name=stop_name,
-            )
+            return _no_eta(route_id, direction_type, stop_name)
 
         # 3. Project Boarding Stop onto Route
         stop_along_dist, stop_perp_dist, _, _ = project_point_onto_polyline(stop_lat, stop_lng, polyline)
+
+        # The stop must lie on this route, exactly as vehicles must. Without this check any
+        # coordinate near the corridor snapped onto the line and received the same confident
+        # ETA as a real stop -- an arrival the vehicle is never going to make.
+        if stop_perp_dist > OFF_ROUTE_TOLERANCE_METERS:
+            return _no_eta(route_id, direction_type, stop_name)
 
         # 4. Gather Live Vehicles (In-Memory Tracking + DB Fallback)
         live_vehicles = tracking_service.get_live_vehicles(
@@ -180,14 +185,7 @@ class ETAService:
         # Only fresh in-memory fixes are used (rebuilt from DB on startup). Old snapshots are
         # never turned into an ETA: no data -> no ETA.
         if not live_vehicles:
-            return ETAResponse(
-                route_id=route_id,
-                direction=direction_type,
-                has_approaching_vehicle=False,
-                confidence=0.0,
-                status="no_approaching_vehicle",
-                boarding_stop_name=stop_name,
-            )
+            return _no_eta(route_id, direction_type, stop_name)
 
         # 5. Evaluate Approaching Vehicles
         approaching_candidates = []
@@ -227,8 +225,6 @@ class ETAService:
 
                 speed_m_per_s = effective_speed * (1000.0 / 3600.0)
                 eta_sec = int(remaining_dist / speed_m_per_s)
-                confidence = confidence
-                effective_speed = effective_speed
                 if remaining_dist < 80.0:
                     status_str = "arriving_now"
                     eta_sec = max(10, eta_sec)
@@ -249,14 +245,7 @@ class ETAService:
         if not approaching_candidates:
             # All online vehicles have already passed the stop!
             # Data integrity: DO NOT RETURN FAKE ETA
-            return ETAResponse(
-                route_id=route_id,
-                direction=direction_type,
-                has_approaching_vehicle=False,
-                confidence=0.0,
-                status="no_approaching_vehicle",
-                boarding_stop_name=stop_name,
-            )
+            return _no_eta(route_id, direction_type, stop_name)
 
         # Select the closest approaching vehicle (minimum remaining distance)
         best = min(approaching_candidates, key=lambda c: c["remaining_meters"])

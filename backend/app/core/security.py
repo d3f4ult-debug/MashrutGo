@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Union
+
 import bcrypt
 from jose import jwt
+
 from app.core.config import settings
 
 
@@ -32,10 +34,7 @@ def create_access_token(
 ) -> str:
     """Create signed JWT access token."""
     now = datetime.now(timezone.utc)
-    if expires_delta:
-        expire = now + expires_delta
-    else:
-        expire = now + timedelta(minutes=settings.access_token_expire_minutes)
+    expire = now + (expires_delta or timedelta(minutes=settings.access_token_expire_minutes))
 
     to_encode: Dict[str, Any] = {
         "sub": str(subject),

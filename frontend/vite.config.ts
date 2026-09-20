@@ -7,6 +7,20 @@ export default defineConfig({
   resolve: {
     alias: [{ find: '@', replacement: '/src' }]
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // The map engine is by far the heaviest dependency and changes far less often than the
+        // app. Splitting it (and the React runtime) out keeps both in the browser cache across
+        // deploys instead of re-downloading them with every app change -- it matters on the
+        // mobile connections this PWA is used on.
+        manualChunks: {
+          maplibre: ['maplibre-gl'],
+          react: ['react', 'react-dom', 'react-router-dom']
+        }
+      }
+    }
+  },
   server: {
     port: 5173,
     proxy: {

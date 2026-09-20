@@ -5,12 +5,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 class RoutingProviderError(Exception):
     """Base exception for routing and geocoding provider issues."""
-    pass
 
 
 class InvalidCoordinateError(RoutingProviderError):
     """Raised when provided coordinates are out of bounds or malformed."""
-    pass
 
 
 @dataclass
@@ -44,9 +42,7 @@ class BaseRoutingProvider(abc.ABC):
         Calculate road path through ordered coordinates [(lat, lng), ...].
         Returns RouteGeometryResult with distance, duration, and GeoJSON LineString.
         """
-        pass
 
     @abc.abstractmethod
     async def geocode(self, query: str) -> List[GeocodingResult]:
         """Geocode search query to geographic locations."""
-        pass

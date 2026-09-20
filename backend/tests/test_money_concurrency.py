@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from app.models.finance import CashoutRequest, Wallet, WalletTransaction
 from app.services import ledger_service
-from tests.factories import auth, fund_client, make_driver, make_fare, make_route, make_uyushma, make_user, super_admin
+from tests.factories import auth, fund_client, make_driver, make_fare, make_route, make_user, make_uyushma, super_admin
 
 
 def _parallel(fn, times: int):

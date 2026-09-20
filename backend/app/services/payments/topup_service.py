@@ -1,6 +1,6 @@
 """Wallet top-up through external providers (Click first)."""
-import secrets
 import logging
+import secrets
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, Mapping, Optional

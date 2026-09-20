@@ -31,17 +31,19 @@ def test_walking_baseline_is_always_present(client):
 
 def test_direct_transit_uses_fare_engine_and_geometry(client, db):
     u = make_uyushma(db)
-    route = make_route(db, u)
+    # Its own corridor, like the other route tests here: the shared session database holds many
+    # lines on the factory default, and asserting on one of several identical plans is a coin toss.
+    route = make_route(db, u, stops=[("G1", 40.90, 72.30), ("G2", 40.90, 72.32), ("G3", 40.90, 72.34)])
     make_fare(db, u, 3000)
-    body = _search(client, (40.7802, 72.3301), (40.7801, 72.3699))
+    body = _search(client, (40.9002, 72.3001), (40.9001, 72.3399))
     direct = next(i for i in body["itineraries"] if i["id"].startswith(f"itin_direct_{route.id}_outbound"))
     assert direct["total_fare_uzs"] == 3000 and direct["fare_known"] is True
     assert direct["live_status"] == "no_online_vehicle_visible"  # route still shown without live cars
-    transit = next(l for l in direct["legs"] if l["leg_type"] == "transit")
+    transit = next(leg for leg in direct["legs"] if leg["leg_type"] == "transit")
     assert transit["route_number"] == route.route_number and transit["polyline"]
     assert 3000 < transit["distance_meters"] < 4000  # follows the stored geometry (~3.4 km)
     # Deterministic ids for identical input
-    again = _search(client, (40.7802, 72.3301), (40.7801, 72.3699))
+    again = _search(client, (40.9002, 72.3001), (40.9001, 72.3399))
     assert [i["id"] for i in again["itineraries"]] == [i["id"] for i in body["itineraries"]]
 
 
@@ -99,3 +101,53 @@ def test_eta_ignores_off_route_and_stale_vehicles(client, db, live_route):
     res = eta_service.calculate_eta(route.id, "inbound", 40.50, 72.04, db_session)
     assert res.has_approaching_vehicle is False
     assert tracking_service.get_state(vehicle.id) is not None
+
+
+def test_eta_refuses_a_stop_that_is_not_on_the_route(client, db, live_route):
+    """A boarding stop is map-matched exactly like a vehicle: off the line means no ETA.
+
+    Regression: the stop's perpendicular distance was computed and thrown away, so any
+    coordinate near the corridor snapped onto the line and received the same confident ETA
+    as a real stop -- an arrival no vehicle was ever going to make.
+    """
+    route, _vehicle, headers = live_route
+    _fix(client, headers, 40.5000, 72.0050)
+
+    on_route = client.get(f"/api/v1/routing/eta?route_id={route.id}&direction=outbound&stop_lat=40.50&stop_lng=72.04").json()
+    assert on_route["has_approaching_vehicle"] is True
+
+    # Same longitude, 22 km north of the line
+    off_route = client.get(f"/api/v1/routing/eta?route_id={route.id}&direction=outbound&stop_lat=40.70&stop_lng=72.04").json()
+    assert off_route["has_approaching_vehicle"] is False
+    assert off_route["status"] == "no_approaching_vehicle"
+    assert off_route["eta_minutes"] is None and off_route["confidence"] == 0.0
+
+    # Just outside the tolerance still counts as off-route, just inside still works
+    near = client.get(f"/api/v1/routing/eta?route_id={route.id}&direction=outbound&stop_lat=40.5015&stop_lng=72.04").json()
+    assert near["has_approaching_vehicle"] is True
+
+
+def test_search_answers_with_a_bounded_shortlist(client, db):
+    """Every candidate is a valid plan, but the response is a shortlist, not the search space.
+
+    Regression: a 60-route city produced a 25 MB response with thousands of itineraries.
+    """
+    u = make_uyushma(db, name="Shortlist Uyushma")
+    make_fare(db, u, 3000)
+    for idx in range(20):
+        base_lat, base_lng = 41.50 + (idx % 5) * 0.010, 71.50 + (idx // 5) * 0.010
+        make_route(db, u, number=f"SL{idx:03d}",
+                   stops=[(f"SL{idx}-{k}", base_lat + k * 0.0015, base_lng + k * 0.0020) for k in range(12)])
+
+    body = _search(client, (41.5050, 71.5050), (41.5200, 71.5250))
+    itineraries = body["itineraries"]
+    assert 0 < len(itineraries) <= 20, f"shortlist grew to {len(itineraries)}"
+
+    # The four recommended plans are always reachable in the list the client renders
+    shown = {i["id"] for i in itineraries}
+    for mode in ("fastest", "cheapest", "least_walking", "least_transfers"):
+        assert body["recommended"][mode]["id"] in shown, f"{mode} missing from the shortlist"
+
+    # Identical input still yields identical output
+    again = _search(client, (41.5050, 71.5050), (41.5200, 71.5250))
+    assert [i["id"] for i in again["itineraries"]] == [i["id"] for i in itineraries]

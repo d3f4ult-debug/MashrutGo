@@ -8,11 +8,14 @@ not to replace a WAF.
 import threading
 import time
 from collections import defaultdict, deque
-from typing import Deque, Dict, Optional
+from typing import Deque, Dict, List, Optional
 
 from fastapi import HTTPException, Request, status
 
+from app.core.config import settings
 from app.services.audit_service import client_ip
+
+_ALL_LIMITERS: List["SlidingWindowLimiter"] = []
 
 
 class SlidingWindowLimiter:
@@ -22,6 +25,11 @@ class SlidingWindowLimiter:
         self.max_keys = max_keys
         self._events: Dict[str, Deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
+        _ALL_LIMITERS.append(self)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._events.clear()
 
     def allow(self, key: str) -> bool:
         now = time.monotonic()
@@ -56,3 +64,21 @@ def limit_by_ip(limiter: SlidingWindowLimiter, request: Request, detail: str) ->
 vehicle_lookup_limiter = SlidingWindowLimiter(max_events=30, window_seconds=60)
 # Public sign-up: slows down account/phone enumeration
 registration_limiter = SlidingWindowLimiter(max_events=5, window_seconds=600)
+# A to B search is the heaviest query in the system (it walks every published line) and needs no
+# account, so one source must not be able to run it in a loop. A passenger refining a trip sends
+# a handful of searches a minute.
+route_search_limiter = SlidingWindowLimiter(max_events=settings.rate_limit_route_search_per_minute, window_seconds=60)
+# The client polls the ETA every 20 s per open route screen; this leaves room for several screens
+# and reloads while still bounding an unauthenticated loop.
+eta_limiter = SlidingWindowLimiter(max_events=settings.rate_limit_eta_per_minute, window_seconds=60)
+# Starting "Kutayapman" puts a point on every driver's map. Real passengers do it occasionally.
+# Limits here are deliberately loose because Uzbek mobile carriers put many users behind one IP --
+# the real defence against ghost pins is the geographic check in client_watch_service.
+watch_start_limiter = SlidingWindowLimiter(max_events=settings.rate_limit_watch_start_per_minute, window_seconds=60)
+
+
+
+def reset_all_limiters() -> None:
+    """Test-suite helper: no test should begin inside the window another test filled."""
+    for limiter in _ALL_LIMITERS:
+        limiter.reset()

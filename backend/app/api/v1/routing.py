@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_dep
 from app.schemas.routing import RouteSearchRequest, RouteSearchResponse
+from app.services.rate_limit import limit_by_ip, route_search_limiter
 from app.services.routing.graph_router import GraphRouter
 
 router = APIRouter(prefix="/routing", tags=["routing"])
@@ -11,6 +12,7 @@ router = APIRouter(prefix="/routing", tags=["routing"])
 @router.post("/search", response_model=RouteSearchResponse)
 def search_itineraries(
     payload: RouteSearchRequest,
+    request: Request,
     db: Session = Depends(get_db_dep),
 ):
     """
@@ -20,7 +22,8 @@ def search_itineraries(
     - Calculates transfer routes (1 transfer)
     - Evaluates and tags fastest, cheapest, least_walking, and least_transfers itineraries
     - Never hides published routes if online vehicles are missing (displays no_online_vehicle_visible)
-    - Accessible anonymously without authentication
+    - Accessible anonymously without authentication (rate limited per client address)
     """
+    limit_by_ip(route_search_limiter, request, "Juda ko'p qidiruv so'rovi. Bir oz kutib qayta urining.")
     response = GraphRouter.search(db, payload)
     return response

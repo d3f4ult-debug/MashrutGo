@@ -6,7 +6,7 @@ import pytest
 from app.models.finance import Payment, Wallet
 from app.services import ledger_service
 from app.services.settings_service import update_settings
-from tests.factories import auth, fund_client, make_driver, make_fare, make_route, make_uyushma, make_user, super_admin
+from tests.factories import auth, fund_client, make_driver, make_fare, make_route, make_user, make_uyushma, super_admin
 
 
 @pytest.fixture

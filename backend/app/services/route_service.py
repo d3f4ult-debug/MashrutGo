@@ -1,4 +1,5 @@
 import json
+from itertools import pairwise
 from typing import List, Optional
 
 from fastapi import HTTPException, status
@@ -145,8 +146,8 @@ def _parse_polyline(value: Optional[str]) -> Optional[str]:
         return None
     try:
         geo = json.loads(value)
-    except ValueError:
-        raise HTTPException(status_code=422, detail="polyline must be a GeoJSON LineString")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="polyline must be a GeoJSON LineString") from exc
     return _validate_geojson(geo)
 
 
@@ -213,7 +214,7 @@ MAX_ENDPOINT_OFFSET_METERS = 1500
 
 
 def _line_length_meters(coords: List[List[float]]) -> float:
-    return sum(haversine_distance(a[1], a[0], b[1], b[0]) for a, b in zip(coords, coords[1:]))
+    return sum(haversine_distance(a[1], a[0], b[1], b[0]) for a, b in pairwise(coords))
 
 
 def _checked_geometry(payload: DirectionSaveRequest) -> tuple:

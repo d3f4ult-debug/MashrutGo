@@ -1,5 +1,5 @@
 from app.models.user import User
-from tests.factories import auth, make_driver, make_route, make_uyushma, make_user, super_admin, unique_phone
+from tests.factories import auth, make_driver, make_route, make_user, make_uyushma, super_admin, unique_phone
 
 
 def test_super_admin_creates_uyushma_with_admin_account(client, db):

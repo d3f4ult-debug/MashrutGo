@@ -9,8 +9,10 @@ Invariants (enforced by app.services.ledger_service):
 """
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import BigInteger, Column, Integer, String, Boolean, ForeignKey, Text, UniqueConstraint
+
+from sqlalchemy import BigInteger, Boolean, Column, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
+
 from app.db.base import Base
 from app.db.types import UTCDateTime
 

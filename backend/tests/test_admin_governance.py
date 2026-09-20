@@ -4,7 +4,7 @@ import uuid
 from app.models.finance import WalletTransaction
 from app.models.transport import Vehicle
 from app.models.user import DriverProfile
-from tests.factories import auth, make_driver, make_route, make_uyushma, make_user, super_admin
+from tests.factories import auth, make_driver, make_route, make_user, make_uyushma, super_admin
 
 
 def test_archive_stops_drivers_and_vehicles_and_leaves_platform_totals(client, db):

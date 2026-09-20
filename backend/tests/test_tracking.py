@@ -1,5 +1,5 @@
-from datetime import datetime, timedelta, timezone
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from app.db.session import SessionLocal
 from app.models.shift import LocationSnapshot

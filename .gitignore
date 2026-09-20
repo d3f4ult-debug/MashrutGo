@@ -28,3 +28,9 @@ mobile/.flutter-plugins*
 *.apk
 *.aab
 *.ipa
+
+# Browser end-to-end suite
+e2e/node_modules/
+e2e/test-results/
+e2e/playwright-report/
+backend/e2e.db

@@ -1,0 +1,53 @@
+# Lint rules for the MashrutGo backend.
+#
+# The selection is deliberately about correctness, not about restyling a working codebase: rules
+# that catch bugs, dead code, unsafe patterns and import drift are on; large mechanical rewrites
+# (typing.List -> list and friends) are left off so that CI failures always mean something.
+target-version = "py312"
+line-length = 140
+extend-exclude = [".venv", "alembic/versions"]
+
+[lint]
+select = [
+    "F",      # pyflakes: undefined names, unused imports, broken f-strings
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "I",      # import ordering
+    "B",      # bugbear: likely bugs
+    "C4",     # comprehension misuse
+    "SIM",    # simplifiable code
+    "PIE",    # unnecessary constructs
+    "RUF",    # ruff-specific checks
+    "PL",     # pylint subset (logic errors, self-assignment, too-complex returns)
+    "TRY004", # raise TypeError for type checks
+]
+ignore = [
+    # FastAPI's whole dependency system is `x = Depends(...)` in a default argument.
+    "B008",
+    # Long, explanatory comments and Uzbek user-facing strings run past the limit.
+    "E501",
+    # Signature width is a design choice here; the endpoints take many query parameters.
+    "PLR0913",
+    # Branch/statement counts: the routing search is inherently branchy and is covered by tests.
+    "PLR0911",
+    "PLR0912",
+    "PLR0915",
+    # Comparison constants read better inline in geometry and fare code.
+    "PLR2004",
+    # Service methods take many positional parameters by design (route_id, direction, lat, lng...).
+    "PLR0917",
+    # `int(round(x))` states the intent in geometry code; the redundant cast is deliberate.
+    "RUF046",
+    # Local imports break genuine import cycles between the realtime and routing services.
+    "PLC0415",
+    # Uzbek copy uses U+2018 in "so'm" and friends on purpose; see docs/contracts.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    # Module-level singletons (tracking, realtime manager) are rebound in tests on purpose.
+    "PLW0603",
+]
+
+[lint.per-file-ignores]
+# Tests assert on literals, build wide fixtures and nest context managers on purpose.
+"tests/*" = ["PLR2004", "SIM117", "RUF059"]

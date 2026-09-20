@@ -1,7 +1,7 @@
 """Client route watch ("Kutayapman") and ride state. Anonymous-friendly, session-secret protected."""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_dep, get_optional_current_user
@@ -16,6 +16,7 @@ from app.schemas.client_watch import (
     WatchStartRequest,
     WatchStopRequest,
 )
+from app.services.rate_limit import limit_by_ip, watch_start_limiter
 from app.services.realtime.client_watch_service import WatchError, client_watch_service
 
 router = APIRouter(prefix="/client", tags=["client-watch"])
@@ -43,6 +44,7 @@ def _error(exc: WatchError) -> HTTPException:
 @router.post("/watch/start", response_model=WatchResponse, status_code=status.HTTP_201_CREATED)
 async def start_route_watch(
     req: WatchStartRequest,
+    request: Request,
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db_dep),
 ):
@@ -50,6 +52,7 @@ async def start_route_watch(
     Start "Kutayapman": the exact GPS point is shared with drivers currently serving this route.
     Returns `client_session_id` — a secret the client must send with every later watch call.
     """
+    limit_by_ip(watch_start_limiter, request, "Juda ko'p so'rov. Bir oz kutib qayta urining.")
     try:
         watch = await client_watch_service.start_watch(
             route_id=req.route_id,

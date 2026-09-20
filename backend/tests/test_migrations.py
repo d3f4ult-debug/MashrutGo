@@ -2,12 +2,12 @@
 import os
 import tempfile
 
-from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from sqlalchemy import create_engine
 
 import app.models  # noqa: F401
+from alembic import command
 from app.db.base import Base
 from app.db.init_db import alembic_config
 

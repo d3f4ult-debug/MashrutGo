@@ -3,7 +3,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from tests.factories import auth, make_driver, make_parking, make_route, make_uyushma, make_user
+from tests.factories import auth, make_driver, make_parking, make_route, make_user, make_uyushma
 
 
 def _next_event(ws, name, limit=12):

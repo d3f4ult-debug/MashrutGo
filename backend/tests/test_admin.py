@@ -1,6 +1,6 @@
 
 from app.models.system import AuditLog
-from tests.factories import PASSWORD, auth, fund_client, make_driver, make_route, make_uyushma, make_user, super_admin
+from tests.factories import PASSWORD, auth, fund_client, make_driver, make_route, make_user, make_uyushma, super_admin
 
 
 def test_kpis_and_uyushma_admin_views(client, db):

@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey
+
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text
+
 from app.db.base import Base
 from app.db.types import UTCDateTime
 

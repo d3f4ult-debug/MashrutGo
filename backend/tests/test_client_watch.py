@@ -86,3 +86,53 @@ def test_one_active_watch_per_session_and_expiry(client, db):
     assert second["watch_id"] in expired
     db.refresh(watch)
     assert watch.status == "expired"
+
+
+def test_watch_rejects_a_waiting_point_that_is_not_on_the_route(client, db):
+    """"Kutayapman" is anonymous, so the point itself must prove it belongs to this line.
+
+    Regression: any coordinate on earth could be pushed onto every driver's map as a waiting
+    passenger, without an account and without a rate limit doing anything about the content.
+    """
+    route = make_route(db, make_uyushma(db))  # the factory line runs along lat 40.78
+
+    for name, lat, lng in (("Toshkent", 41.31, 69.24), ("Moskva", 55.75, 37.61), ("okean", 0.0, -30.0)):
+        res = client.post("/api/v1/client/watch/start",
+                          json={"route_id": route.id, "direction": "outbound", "lat": lat, "lng": lng})
+        assert res.status_code == 422, f"{name} was accepted: {res.text}"
+
+    # A passenger actually standing by the line is still accepted
+    assert client.post("/api/v1/client/watch/start",
+                       json={"route_id": route.id, "direction": "outbound", "lat": 40.7801, "lng": 72.3402}
+                       ).status_code == 201
+
+
+def test_heartbeat_cannot_move_the_pin_off_the_route(client, db):
+    route = make_route(db, make_uyushma(db))
+    watch = _start(client, route.id)
+    res = client.post("/api/v1/client/watch/heartbeat", json={
+        "watch_id": watch["watch_id"], "session_id": watch["client_session_id"],
+        "lat": 55.75, "lng": 37.61,
+    })
+    assert res.status_code == 422
+
+    # The stored point is unchanged, so drivers never saw the bogus position
+    stored = db.query(ClientRouteWatch).filter(ClientRouteWatch.id == watch["watch_id"]).first()
+    db.refresh(stored)
+    assert abs(stored.lat - 40.7801) < 1e-6
+
+
+def test_watch_start_is_rate_limited_per_address(client, db):
+    import secrets
+
+    route = make_route(db, make_uyushma(db))
+    accepted = 0
+    for _ in range(40):
+        res = client.post("/api/v1/client/watch/start", json={
+            "route_id": route.id, "direction": "outbound", "lat": 40.7801, "lng": 72.3402,
+            "session_id": secrets.token_urlsafe(24),
+        })
+        if res.status_code == 429:
+            break
+        accepted += 1
+    assert accepted < 40, "one address created 40 watches without being throttled"

@@ -15,7 +15,8 @@ def _validate_config(v: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         raise ValueError(f"Unknown config keys: {', '.join(sorted(unknown))}")
     for key, value in v.items():
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"config.{key} must be a number")
+            # Pydantic validators signal every rejection with ValueError, including type problems.
+            raise ValueError(f"config.{key} must be a number")  # noqa: TRY004
         if value < 0:
             raise ValueError(f"config.{key} must be >= 0")
     for hour_key in ("peak_start_hour", "peak_end_hour"):

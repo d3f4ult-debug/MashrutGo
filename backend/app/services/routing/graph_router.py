@@ -1,5 +1,6 @@
 import json
 from typing import Any, Dict, List, Optional, Tuple
+
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.transport import Route, RouteDirection
@@ -10,7 +11,6 @@ from app.schemas.routing import (
     RouteSearchRequest,
     RouteSearchResponse,
 )
-from app.services.routing.maptiler_adapter import haversine_distance
 from app.services.fare_engine import quote_fare
 from app.services.realtime.tracking_service import tracking_service
 from app.services.routing.eta_service import (
@@ -18,10 +18,25 @@ from app.services.routing.eta_service import (
     extract_direction_polyline_coordinates,
     project_point_onto_polyline,
 )
+from app.services.routing.maptiler_adapter import haversine_distance
 
 WALKING_SPEED_M_PER_MIN = 75.0  # ~4.5 km/h
 TRANSIT_SPEED_M_PER_MIN = 400.0  # ~24 km/h urban average incl. stops
 ROAD_CURVATURE_FACTOR = 1.25
+
+# Passengers do walk to reach transit -- the product deliberately allows 1-3 km and always keeps
+# the walking-only baseline -- but a line whose nearest stop is further away than this cannot be
+# one half of a sensible transfer plan.
+TRANSFER_ACCESS_WALK_LIMIT_METERS = 3000.0
+# The transfer search compares pairs of lines, so its cost is quadratic in how many lines it
+# considers. Ranking lines by how close they come to the origin (resp. the destination) and
+# keeping the nearest few turns an all-pairs scan over every line in the city into a scan over
+# the handful that could plausibly serve this trip, without dropping a plan a passenger would
+# actually pick.
+MAX_TRANSFER_ENDPOINT_CANDIDATES = 12
+# A journey planner answers with a shortlist. Returning every candidate it generated produced a
+# 25 MB response in a 60-route city; the four recommended plans are always kept.
+MAX_ITINERARIES = 15
 
 
 class StopPoint:
@@ -135,6 +150,18 @@ class GraphRouter:
             if 150.0 <= speed <= 1000.0:
                 return speed
         return TRANSIT_SPEED_M_PER_MIN
+
+    @staticmethod
+    def _nearest_stop(
+        stops: List["StopPoint"],
+        lat: float,
+        lng: float,
+        indices: range,
+    ) -> Tuple[int, float]:
+        """Index of the stop within `indices` closest to (lat, lng), and the walk to it in metres."""
+        best_idx = min(indices, key=lambda i: haversine_distance(lat, lng, stops[i].lat, stops[i].lng))
+        walk_m = haversine_distance(lat, lng, stops[best_idx].lat, stops[best_idx].lng) * ROAD_CURVATURE_FACTOR
+        return best_idx, walk_m
 
     @staticmethod
     def _transit_segment(
@@ -367,39 +394,46 @@ class GraphRouter:
         """Find 2-vehicle transit routes with 1 transfer between lines."""
         results = []
 
+        # Which line the passenger boards depends only on the origin, and where they alight only
+        # on the destination -- so both are resolved once per line instead of once per pair, and
+        # only the nearest few lines on each side enter the pairing below.
+        origin_side: List[Tuple[float, Dict[str, Any], int]] = []
+        dest_side: List[Tuple[float, Dict[str, Any], int]] = []
+        for data in route_directions:
+            stops: List[StopPoint] = data["stops"]
+            board_idx, board_walk_m = cls._nearest_stop(stops, origin.lat, origin.lng, range(len(stops) - 1))
+            if board_walk_m <= TRANSFER_ACCESS_WALK_LIMIT_METERS:
+                origin_side.append((board_walk_m, data, board_idx))
+            alight_idx, alight_walk_m = cls._nearest_stop(stops, destination.lat, destination.lng, range(1, len(stops)))
+            if alight_walk_m <= TRANSFER_ACCESS_WALK_LIMIT_METERS:
+                dest_side.append((alight_walk_m, data, alight_idx))
+
+        origin_side.sort(key=lambda entry: entry[0])
+        dest_side.sort(key=lambda entry: entry[0])
+        del origin_side[MAX_TRANSFER_ENDPOINT_CANDIDATES:]
+        del dest_side[MAX_TRANSFER_ENDPOINT_CANDIDATES:]
+
         # Compare pairs of distinct routes
-        for r1_data in route_directions:
+        for walk_to_r1_raw, r1_data, best_r1_board_idx in origin_side:
             r1: Route = r1_data["route"]
             r1_stops: List[StopPoint] = r1_data["stops"]
+            r1_board_stop = r1_stops[best_r1_board_idx]
+            walk_to_r1_m = int(round(walk_to_r1_raw))
 
-            for r2_data in route_directions:
+            for walk_from_r2_raw, r2_data, best_r2_alight_idx in dest_side:
                 r2: Route = r2_data["route"]
                 if r1.id == r2.id:
                     continue  # Transfer between distinct routes only
 
                 r2_stops: List[StopPoint] = r2_data["stops"]
-
-                # Find optimal boarding on R1 near origin
-                best_r1_board_idx = min(
-                    range(len(r1_stops) - 1),
-                    key=lambda idx: haversine_distance(origin.lat, origin.lng, r1_stops[idx].lat, r1_stops[idx].lng),
-                )
-                r1_board_stop = r1_stops[best_r1_board_idx]
-                walk_to_r1_m = int(round(haversine_distance(origin.lat, origin.lng, r1_board_stop.lat, r1_board_stop.lng) * ROAD_CURVATURE_FACTOR))
-
-                # Find optimal alighting on R2 near destination
-                best_r2_alight_idx = min(
-                    range(1, len(r2_stops)),
-                    key=lambda idx: haversine_distance(r2_stops[idx].lat, r2_stops[idx].lng, destination.lat, destination.lng),
-                )
                 r2_alight_stop = r2_stops[best_r2_alight_idx]
-                walk_from_r2_m = int(round(haversine_distance(r2_alight_stop.lat, r2_alight_stop.lng, destination.lat, destination.lng) * ROAD_CURVATURE_FACTOR))
+                walk_from_r2_m = int(round(walk_from_r2_raw))
 
                 # Look for valid transfer stop pair (r1_alight_idx > best_r1_board_idx, r2_board_idx < best_r2_alight_idx)
                 for r1_alight_idx in range(best_r1_board_idx + 1, len(r1_stops)):
                     r1_transfer_stop = r1_stops[r1_alight_idx]
 
-                    for r2_board_idx in range(0, best_r2_alight_idx):
+                    for r2_board_idx in range(best_r2_alight_idx):
                         r2_transfer_stop = r2_stops[r2_board_idx]
 
                         transfer_walk_m = int(round(haversine_distance(
@@ -572,7 +606,7 @@ class GraphRouter:
                 tags.add("least_walking")
             if it.id == least_transfers_itin.id:
                 tags.add("least_transfers")
-            it.mode_tags = sorted(list(tags))
+            it.mode_tags = sorted(tags)
 
         # Determine primary classification for recommendation
         fastest_itin.mode_classification = "fastest"
@@ -587,15 +621,32 @@ class GraphRouter:
             "least_transfers": least_transfers_itin,
         }
 
-        # Sort all candidates by selected user preference mode
+        # Sort all candidates by selected user preference mode. Overlapping lines routinely tie on
+        # the headline criterion, so every ordering falls through to the same chain -- fewer
+        # transfers, less walking, cheaper -- and finally to the (deterministic) itinerary id, so
+        # identical input always produces identical output.
+        def tie_break(it: Itinerary) -> Tuple[Any, ...]:
+            return (it.transfers_count, it.walking_distance_meters, it.total_fare_uzs, it.id)
+
         pref_mode = preferences.mode if preferences and preferences.mode else "fastest"
-        if pref_mode == "cheapest":
-            sorted_itineraries = sorted(candidates, key=lambda it: (it.total_fare_uzs, it.total_duration_minutes))
-        elif pref_mode == "least_walking":
-            sorted_itineraries = sorted(candidates, key=lambda it: (it.walking_distance_meters, it.total_duration_minutes))
-        elif pref_mode == "least_transfers":
-            sorted_itineraries = sorted(candidates, key=lambda it: (it.transfers_count, it.total_duration_minutes))
-        else:
-            sorted_itineraries = sorted(candidates, key=lambda it: (it.total_duration_minutes, it.transfers_count))
+        sort_keys = {
+            "cheapest": lambda it: (it.total_fare_uzs, it.total_duration_minutes, *tie_break(it)),
+            "least_walking": lambda it: (it.walking_distance_meters, it.total_duration_minutes, *tie_break(it)),
+            "least_transfers": lambda it: (it.transfers_count, it.total_duration_minutes, *tie_break(it)),
+        }
+        sort_key = sort_keys.get(pref_mode, lambda it: (it.total_duration_minutes, *tie_break(it)))
+        sorted_itineraries = sorted(candidates, key=sort_key)
+
+        # Answer with a shortlist. Every candidate the search generated is a valid plan, but a
+        # passenger chooses from a handful and the full set costs megabytes on a phone connection.
+        # The four recommended plans are kept even when they fall outside the top slice.
+        if len(sorted_itineraries) > MAX_ITINERARIES:
+            shortlist = sorted_itineraries[:MAX_ITINERARIES]
+            shown = {it.id for it in shortlist}
+            for best in recommended.values():
+                if best.id not in shown:
+                    shortlist.append(best)
+                    shown.add(best.id)
+            sorted_itineraries = sorted(shortlist, key=sort_key)
 
         return recommended, sorted_itineraries

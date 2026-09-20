@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     # --- Security ---
     login_max_attempts: int = 8
     login_lockout_seconds: int = 300
+    # Per-address throttles for the public, unauthenticated endpoints, in requests per minute.
+    # Tunable because Uzbek mobile carriers put many subscribers behind one address.
+    rate_limit_route_search_per_minute: int = 30
+    rate_limit_eta_per_minute: int = 90
+    rate_limit_watch_start_per_minute: int = 20
     # Reverse proxies whose X-Forwarded-For may be trusted ("*" = trust any peer; only behind a
     # proxy you control). Empty (default) = ignore the header and use the real peer address.
     trusted_proxies: Union[List[str], str] = []

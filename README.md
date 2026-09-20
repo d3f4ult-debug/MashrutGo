@@ -61,11 +61,25 @@ shuning uchun odatda hech qanday `VITE_*` o‘zgaruvchi shart emas.
 ## 2. Testlar
 
 ```bash
-cd backend  && .venv/bin/python -m pytest -q      # 88 test: RBAC, routing, ETA, GPS, to‘lov, ledger, realtime
+cd backend  && .venv/bin/python -m pytest -q      # 100 test: RBAC, routing, ETA, GPS, to‘lov, ledger, realtime
+cd backend  && .venv/bin/python -m ruff check .   # lint (sozlama: backend/ruff.toml)
 cd frontend && npm test                           # vitest: API mapperlar, GPS navbat, hooklar, sahifalar
 cd frontend && npm run typecheck                  # tsc --noEmit
+cd frontend && npm run lint                       # eslint
 cd mobile   && flutter test && flutter analyze    # deep link, tashqi havola siyosati, NFC dekoderi
 ```
+
+### Brauzer E2E (haqiqiy Chromium)
+
+```bash
+cd e2e && npm install && npx playwright install chromium   # bir marta
+cd e2e && npx playwright test                              # 17 test
+```
+
+Backend (vaqtinchalik SQLite + Andijon demo ma’lumotlari) va frontend avtomatik ko‘tariladi —
+boshqa hech narsa ishga tushirish shart emas. Qamrov: A→B qidiruv, xodim kirishi va rol chegaralari,
+smena → brauzer GPS → jonli xarita, “Kutayapman” → haydovchi ro‘yxati → “Mashinadaman”,
+hamyonni to‘ldirish → ledger, yo‘l haqi → haydovchi balansi va ekrani.
 
 ---
 

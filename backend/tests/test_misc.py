@@ -8,7 +8,7 @@ from app.models.system import DeviceToken, Notification
 from app.services.routing.base import InvalidCoordinateError, RoutingProviderError
 from app.services.routing.maptiler_adapter import MapTilerAdapter, haversine_distance
 from app.services.routing.providers import GeodesicFallbackProvider, OSRMRoutingProvider
-from tests.factories import auth, make_route, make_uyushma, make_user
+from tests.factories import auth, make_route, make_user, make_uyushma
 
 
 def test_haversine():
@@ -99,3 +99,29 @@ def test_production_refuses_insecure_defaults(monkeypatch):
 def test_security_headers(client):
     res = client.get("/api/v1/health")
     assert res.headers["x-content-type-options"] == "nosniff" and res.headers["x-frame-options"] == "DENY"
+
+
+def test_public_routing_endpoints_are_rate_limited(client, db):
+    """A to B search walks every published line and needs no account: one address must not loop it."""
+    u = make_uyushma(db, name="Throttle Uyushma")
+    route = make_route(db, u)
+
+    payload = {"origin": {"lat": 40.7802, "lng": 72.3301, "name": "A"},
+               "destination": {"lat": 40.7801, "lng": 72.3699, "name": "B"},
+               "preferences": {"mode": "fastest"}}
+    searches = 0
+    for _ in range(60):
+        if client.post("/api/v1/routing/search", json=payload).status_code == 429:
+            break
+        searches += 1
+    assert searches < 60, "route search accepted 60 unauthenticated requests from one address"
+
+    etas = 0
+    for _ in range(150):
+        res = client.get(f"/api/v1/routing/eta?route_id={route.id}&direction=outbound&stop_lat=40.78&stop_lng=72.34")
+        if res.status_code == 429:
+            break
+        etas += 1
+    assert etas < 150, "ETA accepted 150 unauthenticated requests from one address"
+    # Still generous enough for the client polling one route screen every 20 s
+    assert etas >= 60

@@ -1,15 +1,17 @@
 from datetime import datetime, timezone
+
 from sqlalchemy import (
+    Boolean,
     Column,
+    Float,
+    ForeignKey,
     Integer,
     String,
-    Boolean,
-    Float,
     Text,
-    ForeignKey,
     UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
+
 from app.db.base import Base
 from app.db.types import UTCDateTime
 

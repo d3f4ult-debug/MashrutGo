@@ -1,4 +1,4 @@
-from tests.factories import auth, make_uyushma, make_user
+from tests.factories import auth, make_user, make_uyushma
 
 LINE = {"type": "LineString", "coordinates": [[72.33, 40.78], [72.34, 40.781], [72.35, 40.782]]}
 

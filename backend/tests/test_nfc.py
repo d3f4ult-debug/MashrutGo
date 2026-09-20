@@ -1,5 +1,5 @@
 """NFC identification: chip UIDs match regardless of how the reader formats them."""
-from tests.factories import auth, make_driver, make_fare, make_route, make_uyushma, make_user
+from tests.factories import auth, make_driver, make_fare, make_route, make_user, make_uyushma
 
 
 def test_nfc_uid_matches_across_reader_formats(client, db):

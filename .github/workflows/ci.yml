@@ -16,6 +16,8 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: python -m ruff check .
       - name: Tests (migrations, RBAC, routing, payments, realtime)
         # The suite runs against a temporary SQLite database and the offline routing provider
         run: python -m pytest -q
@@ -60,3 +62,39 @@ jobs:
         run: flutter analyze
       - name: Tests
         run: flutter test
+
+  e2e:
+    # Real Chromium against the real API: the chains no unit test can cover (shift -> GPS -> map,
+    # "Kutayapman" -> driver, fare -> ledger -> driver screen).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm install
+      - name: Install Chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+      - name: Run browser end-to-end suite
+        working-directory: e2e
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 7

@@ -11,7 +11,7 @@ import secrets
 import string
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from sqlalchemy import func
@@ -230,12 +230,12 @@ def pay_ride(
     )
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
         replay = db.query(Payment).filter(Payment.idempotency_key == idempotency_key).first()
         if replay and replay.client_user_id == client.id:
             return PaymentResult(replay, replayed=True)
-        raise PaymentError("To'lovni saqlab bo'lmadi, qayta urinib ko'ring", 409, "conflict")
+        raise PaymentError("To'lovni saqlab bo'lmadi, qayta urinib ko'ring", 409, "conflict") from exc
     db.refresh(payment)
     return PaymentResult(payment, replayed=False)
 

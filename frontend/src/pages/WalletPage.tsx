@@ -148,17 +148,24 @@ export default function WalletPage() {
     }
   }
 
-  if (!authLoading && !isClient) {
+  // Everything that is not a signed-in client shares this block, including the moment a sign-in
+  // is in flight. Keying it off `!authLoading` used to unmount the modal the instant the user
+  // pressed "Kirish", which threw away the error message a failed sign-in writes into it.
+  if (!isClient) {
     return (
       <div className="max-w-md mx-auto py-10 text-center space-y-4">
         <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto text-3xl">
           <i className="ri-wallet-3-line"></i>
         </div>
         <h1 className="text-lg font-bold">{uz.wallet.title}</h1>
-        <p className="text-sm text-neutral-500">
-          {user ? 'Hamyon faqat yo‘lovchi hisoblari uchun.' : 'Hamyondan foydalanish uchun hisobingizga kiring.'}
-        </p>
-        {!user && (
+        {authLoading ? (
+          <p className="text-sm text-neutral-400">Yuklanmoqda…</p>
+        ) : (
+          <p className="text-sm text-neutral-500">
+            {user ? 'Hamyon faqat yo‘lovchi hisoblari uchun.' : 'Hamyondan foydalanish uchun hisobingizga kiring.'}
+          </p>
+        )}
+        {!user && !authLoading && (
           <button onClick={() => setIsAuthOpen(true)} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold">
             Kirish / Ro‘yxatdan o‘tish
           </button>

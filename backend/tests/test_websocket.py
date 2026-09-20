@@ -2,7 +2,7 @@ import json
 import uuid
 
 from app.core.security import create_access_token
-from tests.factories import auth, fund_client, make_driver, make_fare, make_route, make_uyushma, make_user
+from tests.factories import auth, fund_client, make_driver, make_fare, make_route, make_user, make_uyushma
 
 
 def _next_event(ws, name, limit=10):

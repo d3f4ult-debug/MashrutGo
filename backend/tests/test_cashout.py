@@ -1,7 +1,7 @@
 import uuid
 
 from app.models.finance import Wallet
-from tests.factories import auth, fund_client, make_driver, make_fare, make_route, make_uyushma, make_user
+from tests.factories import auth, fund_client, make_driver, make_fare, make_route, make_user, make_uyushma
 
 
 def _setup(client, db, rides=4):

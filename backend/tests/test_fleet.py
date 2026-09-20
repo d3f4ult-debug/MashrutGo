@@ -1,4 +1,4 @@
-from tests.factories import auth, make_driver, make_route, make_uyushma, make_user, unique_phone
+from tests.factories import auth, make_driver, make_route, make_user, make_uyushma, unique_phone
 
 
 def test_vehicle_crud_with_generated_internal_id(client, db):

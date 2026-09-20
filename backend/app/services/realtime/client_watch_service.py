@@ -17,13 +17,21 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.shift import ClientRideState, ClientRouteWatch
-from app.models.transport import Route
+from app.models.transport import Route, RouteDirection
 from app.services.realtime.connection_manager import realtime_manager
+from app.services.routing.eta_service import (
+    extract_direction_polyline_coordinates,
+    project_point_onto_polyline,
+)
 
 logger = logging.getLogger(__name__)
 
 MIN_SESSION_ID_LENGTH = 16
 ON_CAR_AUTO_EXIT_AFTER = timedelta(hours=4)
+# A passenger waiting for a line stands on it, give or take a walk to the stop and a poor GPS fix.
+# Anything further is not a passenger: without this check any coordinate on earth could be pushed
+# onto every driver's map as a waiting-passenger pin.
+MAX_DISTANCE_FROM_ROUTE_METERS = 2000.0
 
 
 class WatchError(Exception):
@@ -53,6 +61,23 @@ def _broadcast_payload(watch: ClientRouteWatch, action: str) -> Dict[str, Any]:
 
 
 class ClientWatchService:
+    @staticmethod
+    def _assert_point_on_route(db: Session, route_id: int, direction: str, lat: float, lng: float) -> None:
+        """Reject waiting points that are nowhere near the line the passenger claims to be waiting for."""
+        row = (
+            db.query(RouteDirection)
+            .filter(RouteDirection.route_id == route_id, RouteDirection.direction_type == direction)
+            .first()
+        )
+        if row is None:
+            return  # No geometry to check against; the route itself is validated by the caller.
+        polyline = extract_direction_polyline_coordinates(row)
+        if len(polyline) < 2:
+            return
+        _, perpendicular_m, _, _ = project_point_onto_polyline(lat, lng, polyline)
+        if perpendicular_m > MAX_DISTANCE_FROM_ROUTE_METERS:
+            raise WatchError("Kutish nuqtasi bu yo'nalishdan juda uzoq", 422)
+
     def _latest_ride_state(self, db: Session, watch: ClientRouteWatch) -> Optional[ClientRideState]:
         return (
             db.query(ClientRideState)
@@ -93,6 +118,7 @@ class ClientWatchService:
             raise WatchError("direction must be 'outbound' or 'inbound'", 422)
         if session_id is not None and len(session_id) < MIN_SESSION_ID_LENGTH:
             raise WatchError(f"session_id must be at least {MIN_SESSION_ID_LENGTH} characters", 422)
+        self._assert_point_on_route(db, route_id, direction, lat, lng)
         client_session = session_id or secrets.token_urlsafe(24)
         now = _utcnow()
 
@@ -147,6 +173,8 @@ class ClientWatchService:
         watch.expires_at = _expiry(now)
         moved = lat is not None and lng is not None and (lat != watch.lat or lng != watch.lng)
         if lat is not None and lng is not None:
+            # A heartbeat may move the pin, so it is checked exactly like the initial position.
+            self._assert_point_on_route(db, watch.route_id, watch.direction, lat, lng)
             watch.lat, watch.lng = lat, lng
         db.commit()
         db.refresh(watch)

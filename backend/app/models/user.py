@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
+
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
+
+from app.core.roles import UserRole
 from app.db.base import Base
 from app.db.types import UTCDateTime
-from app.core.roles import UserRole
 
 
 def _utcnow() -> datetime:

@@ -104,7 +104,10 @@ export default function PlaceSearchInput({
       </div>
 
       {open && (loading || error || suggestions.length > 0 || value.trim().length >= 2) && (
-        <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-neutral-200 rounded-xl shadow-lg z-30 overflow-hidden divide-y divide-neutral-100 max-h-64 overflow-y-auto">
+        <div
+          data-testid="place-suggestions"
+          className="absolute left-0 right-0 top-full mt-1 bg-white border border-neutral-200 rounded-xl shadow-lg z-30 overflow-hidden divide-y divide-neutral-100 max-h-64 overflow-y-auto"
+        >
           {loading && <div className="px-3 py-2.5 text-xs text-neutral-500">Qidirilmoqda…</div>}
           {error && <div className="px-3 py-2.5 text-xs text-red-600">{error}</div>}
           {!loading && !error && value.trim().length >= 2 && suggestions.length === 0 && (

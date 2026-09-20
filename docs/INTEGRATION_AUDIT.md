@@ -46,21 +46,26 @@ bo'sh yoki xato holatini ochiq ko'rsatadi (0 yoki "—" bilan yashirmaydi).
 
 Quyidagilar shu auditning oxirida qayta ishga tushirildi:
 
-| Tekshiruv | Natija |
-|---|---|
-| `pytest` (backend) | **94 passed** |
-| `vitest` (frontend) | **134 passed** (20 fayl) |
-| `tsc --noEmit` | xatosiz |
-| `eslint src` | xatosiz |
-| `npm run build` | muvaffaqiyatli |
-| Brauzer E2E (haqiqiy Chrome, barcha rollar) | **70 passed, 0 failed** |
-| Brauzer E2E (client oqimlari: watch + sandbox to'ldirish) | **7 passed, 0 failed** |
-| `flutter analyze` / `flutter test` | toza / **6 passed** |
+| Tekshiruv | Buyruq | Natija |
+|---|---|---|
+| Backend testlari | `cd backend && pytest -q` | **100 passed** |
+| Backend lint | `cd backend && ruff check .` | toza (`backend/ruff.toml`) |
+| Frontend testlari | `cd frontend && npm test` | **134 passed** (20 fayl) |
+| Tiplar | `cd frontend && npm run typecheck` | xatosiz |
+| Frontend lint | `cd frontend && npm run lint` | xatosiz |
+| Build | `cd frontend && npm run build` | muvaffaqiyatli |
+| Brauzer E2E | `cd e2e && npx playwright test` | **17 passed** |
+| Mobil | `cd mobile && flutter test && flutter analyze` | **6 passed** / toza |
+
+Hammasi CI'da ham ishlaydi (`.github/workflows/ci.yml`: `backend`, `frontend`, `mobile`, `e2e`).
 
 Brauzer E2E quruq "sahifa ochildi"dan iborat emas — real zanjirlar tekshiriladi:
 smena boshlanishi → brauzer GPS'i jonli xaritaga yetib borishi → yo'lovchining "Kutayapman"
-belgisi haydovchi xaritasida paydo bo'lishi va "Mashinadaman"da yo'qolishi → to'lovning haydovchi
-ekranida jonli ko'rinishi → sandbox hamyon to'ldirishning ledgerga tushishi.
+belgisi haydovchi ro'yxatida paydo bo'lishi va "Mashinadaman"da yo'qolishi → to'lovning haydovchi
+balansi va ekraniga yetib borishi → sandbox hamyon to'ldirishning ledgerga tushishi.
+
+> **Avvalgi versiyadagi xato**: bu jadval "70 + 7 passed brauzer E2E" deb yozgan edi, lekin o'sha
+> testlar repoda saqlanmagan — ularni takrorlab bo'lmasdi. Endi to'plam `e2e/` papkasida va CI'da.
 
 ---
 
@@ -132,8 +137,9 @@ ekranida jonli ko'rinishi → sandbox hamyon to'ldirishning ledgerga tushishi.
    lekin yuk ostidagi test PostgreSQL'da qayta o'tkazilishi kerak.
 6. **IndexedDB ishlamay qolsa** (private rejim, kvota) navbat xotiraga o'tadi; o'sha seansda
    diskdagi eski nuqtalar kutib turadi va keyingi ochilishda yuboriladi.
-7. **Asosiy JS chunk ~1 MB** (gzip ~290 KB): client PWA to'liq eager yuklanadi, xodimlar paneli esa
-   alohida chunk'larda. Yo'lovchi uchun yanada tezlashtirish mumkin.
+7. **Xarita kutubxonasi og'ir** (maplibre-gl, gzip ~200 KB). Endi alohida chunk'da, shuning uchun
+   deploylar orasida brauzer keshida qoladi; ilova kodi gzip ~35 KB. Xaritani faqat kerak bo'lganda
+   yuklash (lazy) — keyingi qadam.
 
 ---
 
@@ -146,3 +152,80 @@ ekranida jonli ko'rinishi → sandbox hamyon to'ldirishning ledgerga tushishi.
 - [ ] Redis: rate limit + WebSocket fan-out (bir nechta worker rejasi bo'lsa).
 - [ ] Monitoring: `/api/v1/health`, xato jurnali, ledger izchilligi (`/admin/ledger/health`) uchun alert.
 - [ ] Android foreground service (fon rejimidagi GPS) — mahsulot qaroriga bog'liq.
+
+---
+
+## 7. Ikkinchi audit (2026-09-20, mustaqil tekshiruv)
+
+Yuqoridagi hujjat "hammasi ishlaydi" degan ohangda edi. Mustaqil qayta tekshiruv quyidagilarni
+topdi; hammasi tuzatildi va har biri uchun regressiya testi bor.
+
+### 7.1 Bloker — repo holati
+
+Ishlayotgan ilovaning katta qismi git'ga umuman kirmagan edi: butun `alembic/` (migratsiyalar),
+`payments.py`, `ledger_service.py`, `payment_service.py`, `admin.py`, `operations.py`,
+`notifications.py`, `geo.py`, joriy 22 ta backend testi, `requirements-dev.txt`,
+`frontend/.eslintrc.cjs`, `clientApi.ts`, `driverApi.ts`, `services/driver/`, Flutter `test/` va
+native loyihalar — 95 ta untracked yo'l. Toza klon qurilmas, CI esa birinchi qadamda
+(`pip install -r requirements-dev.txt`) yiqilardi. Hammasi commit qilindi.
+
+### 7.2 Kritik — marshrut qidiruvi shahar miqyosida ishlamasdi
+
+`_find_transfer_transit_itineraries` har juft yo'nalish × har juft bekat bo'yicha aylanardi
+(O(R²·S²)), `_evaluate_multi_criteria` esa hech narsani kesmay barcha nomzodni to'liq polyline
+bilan qaytarardi.
+
+| Yo'nalishlar | Oldin | Hozir |
+|---|---|---|
+| 25 | 402 ms · 1 170 variant | 78 ms · 16 variant |
+| 50 | 1 833 ms · 5 386 variant | 191 ms · 16 variant |
+| 80 | 4 120 ms · 11 419 variant | 197 ms · 16 variant |
+| 60 yo'nalishli shaharda javob hajmi | **25.4 MB** | **62 KB** |
+
+Yechim: transfer qidiruvi endi origin/destination'ga eng yaqin bir nechta liniya bilan
+cheklanadi (`TRANSFER_ACCESS_WALK_LIMIT_METERS`, `MAX_TRANSFER_ENDPOINT_CANDIDATES`), javob esa
+qisqa ro'yxat (`MAX_ITINERARIES = 15`) bo'lib, 4 ta tavsiya etilgan variant har doim ichida qoladi.
+Teng natijalar endi mazmunli va deterministik tartibda (kam transfer → kam piyoda → arzon → id).
+
+### 7.3 Yuqori — ETA uydirma vaqt berardi
+
+`eta_service` bekatni yo'nalishga proyeksiya qilib, perpendikulyar masofani **tashlab yuborardi**.
+Natijada 22 km uzoqdagi nuqta haqiqiy bekat bilan bir xil javob olardi: 7 daqiqa, confidence 0.95.
+Bu `UMUMIY_ABOUT.md` §7 dagi "uydirma vaqt ko'rsatilmaydi" tamoyilini buzardi. Endi bekat ham
+transport kabi `OFF_ROUTE_TOLERANCE_METERS` bilan tekshiriladi.
+
+### 7.4 Yuqori — "Kutayapman" spam qilinardi
+
+`/client/watch/start` anonim, rate limit'siz va koordinata tekshiruvisiz edi. "Bitta sessiyaga
+bitta watch" qoidasi mijoz yuboradigan `session_id`ga tayanardi, shuning uchun 50 ta so'rov bilan
+bitta yo'nalishda 50 ta soxta "kutayotgan yo'lovchi" yaratib, hammasini haydovchilarga uzatish
+mumkin edi — koordinatalar Moskvada bo'lsa ham. Endi kutish nuqtasi yo'nalish geometriyasidan
+2 km dan uzoq bo'lsa 422 qaytadi (heartbeat ham tekshiriladi), ustiga IP bo'yicha throttle.
+
+### 7.5 Yuqori — eng qimmat endpointlar himoyasiz edi
+
+`/routing/search` va `/routing/eta` anonim va cheklovsiz edi. Endi ikkalasi ham throttle ostida;
+chegaralar sozlanadigan (`RATE_LIMIT_*`), chunki O'zbekistonda mobil operatorlar ko'p abonentni
+bitta IP ortiga qo'yadi.
+
+### 7.6 Yuqori — mijoz kirish modali xatoni yutib yuborardi
+
+`WalletPage` "kirish kerak" blokini `!authLoading` sharti bilan render qilardi. Foydalanuvchi
+"Kirish" bosishi bilan `authLoading` true bo'lib, modal **unmount** bo'lardi — demak noto'g'ri
+parol kiritilganda xato xabari hech qachon ko'rinmasdi. Brauzer E2E aynan shuni topdi.
+
+### 7.7 O'rta — tekshiruv infratuzilmasi
+
+- Backend lint CI'da umuman yo'q edi va ruff sozlamasi ham yo'q edi (`ruff check .` 1003 xato
+  berardi). Endi `backend/ruff.toml` (xatolarga qaratilgan, uslub churn'isiz) va CI'da `ruff check`.
+- Brauzer E2E to'plami yo'q edi. Endi `e2e/` — Playwright, haqiqiy Chromium, 17 test, CI'da.
+- `graph_router`/`eta_service`dagi o'lik kod (o'z-o'ziga tayinlash), `raise ... from`siz
+  qayta ko'tarishlar va shunga o'xshash kichik topilmalar tuzatildi.
+- Xarita kutubxonasi alohida chunk'ga chiqarildi: ilova kodi gzip 290 KB → 35 KB.
+
+### 7.8 Mock ma'lumot — qayta tekshirildi
+
+Maxsus qidirildi: interfeyslarda soxta ma'lumot yo'q. Barcha "placeholder" — oddiy input
+placeholder'lari, yagona `Math.random` idempotentlik kaliti uchun, hech qanday `setTimeout`
+simulyatsiyasi yoki qattiq yozilgan KPI yo'q. Yagona sun'iy ma'lumot — `seed_service.py`,
+`SEED_DEMO_DATA` bilan yopilgan va production'da ishga tushishni bloklaydi; soxta GPS yaratmaydi.

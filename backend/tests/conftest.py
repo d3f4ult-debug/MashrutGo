@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.db.init_db import run_migrations  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services.rate_limit import reset_all_limiters  # noqa: E402
 from app.services.seed_service import seed_bootstrap_admin  # noqa: E402
 
 
@@ -46,6 +47,13 @@ def migrated_database():
 def client(migrated_database):
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture(autouse=True)
+def fresh_rate_limits():
+    """Rate limiters are process-wide singletons; one test must not throttle the next."""
+    reset_all_limiters()
+    yield
 
 
 @pytest.fixture

@@ -34,8 +34,8 @@ from app.services.fare_engine import SUPPORTED_RULE_TYPES
 from app.services.fleet_service import (
     FleetError,
     active_shift_for_driver,
-    active_shifts_for_drivers,
     active_shift_for_vehicle,
+    active_shifts_for_drivers,
     apply_vehicle_assignment,
     assign_driver_vehicle,
     create_driver_account,
