@@ -1,33 +1,34 @@
 name: mashrutgo_mobile
-description: "MashrutGo Driver & Operations Native Flutter WebView Wrapper + FCM Bridge"
+description: "MashrutGo Flutter WebView wrapper: the web PWA is the product; this shell adds GPS/camera permissions, NFC, FCM push and deep links."
 publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.2.0 <4.0.0'
+  sdk: '>=3.5.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
 
-  # Core WebView
-  webview_flutter: ^4.10.0
+  # WebView (platform packages are used directly for geolocation/camera permission prompts)
+  webview_flutter: ^4.14.1
+  webview_flutter_android: ^4.14.1
+  webview_flutter_wkwebview: ^3.26.1
 
-  # Push Notifications (FCM)
-  firebase_core: ^3.10.0
-  firebase_messaging: ^15.2.0
-  flutter_local_notifications: ^18.0.1
+  # Push notifications (FCM)
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
+  flutter_local_notifications: ^22.3.1
 
-  # Native Hardware & Permissions
-  permission_handler: ^11.3.1
-  geolocator: ^13.0.2
+  # Native capabilities bridged to the web app
+  permission_handler: ^12.0.1
+  geolocator: ^14.0.3
+  nfc_manager: ^4.2.1
+  wakelock_plus: ^1.8.0
 
-  # External Links & Connectivity
-  url_launcher: ^6.3.1
-  connectivity_plus: ^6.1.1
-
-  # HTTP client for backend device registration
-  http: ^1.2.2
+  # External links & connectivity
+  url_launcher: ^6.3.2
+  connectivity_plus: ^7.3.1
 
 dev_dependencies:
   flutter_test:
@@ -36,5 +37,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/images/

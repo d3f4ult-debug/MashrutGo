@@ -1,146 +1,320 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
-import { financeApi } from '../../services/api/financeApi';
-import { uyushmaApi } from '../../services/api/uyushmaApi';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useUyushmaScope } from '../../contexts/UyushmaScopeContext'
+import {
+  CASHOUT_METHOD_LABELS,
+  CASHOUT_STATUS_LABELS,
+  FINANCE_PERIOD_LABELS,
+  IDENTIFICATION_METHOD_LABELS,
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_REFERENCE_MAX_LENGTH,
+  PAYMENT_STATUS_LABELS,
+  PAYMENTS_SEARCH_MAX_LENGTH,
+  REJECT_REASON_MAX_LENGTH,
+  canApproveCashout,
+  canMarkCashoutPaid,
+  canRejectCashout,
+  financeApi,
+  labelOf,
+  periodStartIso,
+  validatePaymentReference,
+  validateRejectReason,
+} from '../../services/api/financeApi'
+import { uyushmaApi } from '../../services/api/uyushmaApi'
+import { ApiError, errorMessage } from '../../services/api/client'
+import { formatDateTime, formatSom } from '../../utils/format'
 import type {
-  UyushmaPaymentTransaction,
-  UyushmaCashoutRequest,
+  CashoutRequest,
+  CashoutStatus,
+  FinancePaymentMethod,
+  FinancePaymentStatus,
+  FinancePeriod,
   FinanceSummary,
-} from '../../types/finance';
-import type { UyushmaRoute } from '../../types/uyushma';
-import './UyushmaOperations.css';
-import './UyushmaFinance.css';
+  Paginated,
+  UyushmaPayment,
+} from '../../types/finance'
+import type { UyushmaRoute } from '../../types/uyushma'
+import './UyushmaOperations.css'
+import './UyushmaFinance.css'
 
-type FinanceTab = 'payments' | 'cashouts' | 'summary';
+type FinanceTab = 'payments' | 'cashouts' | 'summary'
+type CashoutFilter = CashoutStatus | 'all'
+type DialogKind = 'approve' | 'reject' | 'paid'
+
+const PERIODS: FinancePeriod[] = ['today', '7d', '30d', 'all']
+const CASHOUT_FILTERS: CashoutFilter[] = ['pending', 'approved', 'paid', 'rejected', 'all']
+const PAGE_SIZES = [25, 50, 100]
+const SEARCH_DEBOUNCE_MS = 350
+
+function isAbort(err: unknown): boolean {
+  return err instanceof DOMException && err.name === 'AbortError'
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delayMs)
+    return () => clearTimeout(t)
+  }, [value, delayMs])
+  return debounced
+}
+
+function paymentStatusClass(status: string): string {
+  if (status === 'completed') return 'fin-pill fin-pill--success'
+  if (status === 'refunded') return 'fin-pill fin-pill--warning'
+  return 'fin-pill fin-pill--danger'
+}
+
+function cashoutStatusClass(status: string): string {
+  switch (status) {
+    case 'pending':
+      return 'fin-pill fin-pill--warning'
+    case 'approved':
+      return 'fin-pill fin-pill--info'
+    case 'paid':
+      return 'fin-pill fin-pill--success'
+    default:
+      return 'fin-pill fin-pill--danger'
+  }
+}
+
+function vehicleLabel(plate: string | null, internalId: string | null): string {
+  return plate || internalId || '—'
+}
 
 export function UyushmaPayments() {
-  const { user } = useAuth();
-  const uyushmaId = user?.uyushma_id || 'uyushma-01';
+  const { uyushmaId, loading: scopeLoading } = useUyushmaScope()
 
-  const [activeTab, setActiveTab] = useState<FinanceTab>('payments');
-  const [payments, setPayments] = useState<UyushmaPaymentTransaction[]>([]);
-  const [cashouts, setCashouts] = useState<UyushmaCashoutRequest[]>([]);
-  const [summary, setSummary] = useState<FinanceSummary | null>(null);
-  const [routes, setRoutes] = useState<UyushmaRoute[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  if (!uyushmaId) {
+    return (
+      <div className="uyushma-page-container">
+        <div className="fin-empty">
+          <i className={scopeLoading ? 'ri-loader-4-line ri-spin' : 'ri-building-2-line'} />
+          <p>{scopeLoading ? 'Yuklanmoqda…' : 'Uyushma tanlanmagan. Sarlavhadagi ro‘yxatdan uyushmani tanlang.'}</p>
+        </div>
+      </div>
+    )
+  }
+  // Remount per tenant: every filter, list and dialog starts clean when the Super Admin switches tenant.
+  return <UyushmaFinanceView key={uyushmaId} uyushmaId={uyushmaId} />
+}
 
-  // Filters
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRouteId, setSelectedRouteId] = useState('');
-  const [selectedMethod, setSelectedMethod] = useState('all');
-  const [selectedStatus, setSelectedStatus] = useState('all');
+function UyushmaFinanceView({ uyushmaId }: { uyushmaId: string }) {
+  const [activeTab, setActiveTab] = useState<FinanceTab>('payments')
+  const [period, setPeriod] = useState<FinancePeriod>('30d')
+  const [reloadKey, setReloadKey] = useState(0)
 
-  // Cashout Modals
-  const [rejectingCashout, setRejectingCashout] = useState<UyushmaCashoutRequest | null>(null);
-  const [rejectionReason, setRejectionReason] = useState('');
-  const [isSubmittingReject, setIsSubmittingReject] = useState(false);
+  // ── Summary ──
+  const [summary, setSummary] = useState<FinanceSummary | null>(null)
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
 
-  const [payingCashout, setPayingCashout] = useState<UyushmaCashoutRequest | null>(null);
-  const [paymentReference, setPaymentReference] = useState('');
-  const [isSubmittingPay, setIsSubmittingPay] = useState(false);
+  // ── Payments (server-side filters + pagination) ──
+  const [searchInput, setSearchInput] = useState('')
+  const debouncedSearch = useDebouncedValue(searchInput.trim(), SEARCH_DEBOUNCE_MS)
+  const [routeId, setRouteId] = useState('')
+  const [paymentStatus, setPaymentStatus] = useState<FinancePaymentStatus | ''>('')
+  const [paymentMethod, setPaymentMethod] = useState<FinancePaymentMethod | ''>('')
+  const [pageSize, setPageSize] = useState(PAGE_SIZES[0])
+  // Any filter change starts from page 1 (derived, so no extra request with a stale page number).
+  const filtersKey = JSON.stringify([debouncedSearch, routeId, paymentStatus, paymentMethod, pageSize, period])
+  const [pageState, setPageState] = useState({ key: filtersKey, page: 1 })
+  const page = pageState.key === filtersKey ? pageState.page : 1
+  const setPage = (update: (p: number) => number) => setPageState({ key: filtersKey, page: Math.max(1, update(page)) })
+  const [payments, setPayments] = useState<Paginated<UyushmaPayment> | null>(null)
+  const [paymentsLoading, setPaymentsLoading] = useState(false)
+  const [paymentsError, setPaymentsError] = useState<string | null>(null)
 
-  // Toast feedback
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [routes, setRoutes] = useState<UyushmaRoute[]>([])
+  const [routesError, setRoutesError] = useState<string | null>(null)
 
-  const loadData = async () => {
-    setIsLoading(true);
-    try {
-      const [pmts, csh, sum, rts] = await Promise.all([
-        financeApi.getPayments(uyushmaId),
-        financeApi.getCashouts(uyushmaId),
-        financeApi.getFinanceSummary(uyushmaId),
-        uyushmaApi.getRoutes(uyushmaId),
-      ]);
-      setPayments(pmts);
-      setCashouts(csh);
-      setSummary(sum);
-      setRoutes(rts);
-    } catch {
-      // Fallback in API
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // ── Cash-outs ──
+  const [cashoutFilter, setCashoutFilter] = useState<CashoutFilter>('pending')
+  const [cashouts, setCashouts] = useState<CashoutRequest[]>([])
+  const [pendingCount, setPendingCount] = useState<number | null>(null)
+  const [cashoutsLoading, setCashoutsLoading] = useState(false)
+  const [cashoutsError, setCashoutsError] = useState<string | null>(null)
+
+  // ── Action dialog ──
+  const [dialog, setDialog] = useState<{ kind: DialogKind; cashout: CashoutRequest } | null>(null)
+  const [dialogInput, setDialogInput] = useState('')
+  const [dialogError, setDialogError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showToast = useCallback((kind: 'success' | 'error', text: string) => {
+    setToast({ kind, text })
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), 6000)
+  }, [])
+
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+  }, [])
+
+  // ── Loaders ──
+  useEffect(() => {
+    const ctrl = new AbortController()
+    setRoutesError(null)
+    uyushmaApi
+      .getRoutes(uyushmaId)
+      .then((list) => {
+        if (!ctrl.signal.aborted) setRoutes(list)
+      })
+      .catch((err) => {
+        if (ctrl.signal.aborted) return
+        setRoutes([])
+        setRoutesError(errorMessage(err, 'Yo‘nalishlarni yuklab bo‘lmadi'))
+      })
+    return () => ctrl.abort()
+  }, [uyushmaId, reloadKey])
 
   useEffect(() => {
-    loadData();
-  }, [uyushmaId]);
+    const ctrl = new AbortController()
+    setSummaryLoading(true)
+    setSummaryError(null)
+    financeApi
+      .getFinanceSummary(uyushmaId, periodStartIso(period), ctrl.signal)
+      .then((s) => {
+        if (!ctrl.signal.aborted) setSummary(s)
+      })
+      .catch((err) => {
+        if (isAbort(err)) return
+        setSummary(null)
+        setSummaryError(errorMessage(err, 'Moliyaviy hisobotni yuklab bo‘lmadi'))
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setSummaryLoading(false)
+      })
+    return () => ctrl.abort()
+  }, [uyushmaId, period, reloadKey])
 
-  // Filtered Payments
-  const filteredPayments = useMemo(() => {
-    return payments.filter(p => {
-      if (selectedRouteId && p.route_id !== selectedRouteId) return false;
-      if (selectedMethod !== 'all' && p.method !== selectedMethod) return false;
-      if (selectedStatus !== 'all' && p.status !== selectedStatus) return false;
+  useEffect(() => {
+    const ctrl = new AbortController()
+    setPaymentsLoading(true)
+    setPaymentsError(null)
+    financeApi
+      .getPayments(
+        uyushmaId,
+        {
+          routeId: routeId || undefined,
+          status: paymentStatus || undefined,
+          method: paymentMethod || undefined,
+          search: debouncedSearch || undefined,
+          dateFrom: periodStartIso(period),
+          page,
+          size: pageSize,
+        },
+        ctrl.signal,
+      )
+      .then((res) => {
+        if (!ctrl.signal.aborted) setPayments(res)
+      })
+      .catch((err) => {
+        if (isAbort(err)) return
+        setPaymentsError(errorMessage(err, 'To‘lovlarni yuklab bo‘lmadi'))
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setPaymentsLoading(false)
+      })
+    return () => ctrl.abort()
+  }, [uyushmaId, routeId, paymentStatus, paymentMethod, debouncedSearch, period, page, pageSize, reloadKey])
 
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const refMatch = p.reference_id.toLowerCase().includes(q);
-        const driverMatch = p.driver_name.toLowerCase().includes(q);
-        const plateMatch = p.vehicle_plate.toLowerCase().includes(q);
-        return refMatch || driverMatch || plateMatch;
+  useEffect(() => {
+    const ctrl = new AbortController()
+    setCashoutsLoading(true)
+    setCashoutsError(null)
+    const status = cashoutFilter === 'all' ? undefined : cashoutFilter
+    Promise.all([
+      financeApi.getCashouts(uyushmaId, status, ctrl.signal),
+      cashoutFilter === 'pending' ? null : financeApi.getCashouts(uyushmaId, 'pending', ctrl.signal),
+    ])
+      .then(([list, pending]) => {
+        if (ctrl.signal.aborted) return
+        setCashouts(list)
+        setPendingCount((pending ?? list).length)
+      })
+      .catch((err) => {
+        if (isAbort(err)) return
+        setCashoutsError(errorMessage(err, 'Pul yechish so‘rovlarini yuklab bo‘lmadi'))
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setCashoutsLoading(false)
+      })
+    return () => ctrl.abort()
+  }, [uyushmaId, cashoutFilter, reloadKey])
+
+  const reloadAll = () => setReloadKey((k) => k + 1)
+
+  // ── Cash-out actions ──
+  const openDialog = (kind: DialogKind, cashout: CashoutRequest) => {
+    setDialog({ kind, cashout })
+    setDialogInput('')
+    setDialogError(null)
+  }
+
+  const closeDialog = () => {
+    if (submitting) return
+    setDialog(null)
+    setDialogError(null)
+  }
+
+  const submitDialog = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!dialog || submitting) return
+    const { kind, cashout } = dialog
+    if (kind === 'reject') {
+      const invalid = validateRejectReason(dialogInput)
+      if (invalid) return setDialogError(invalid)
+    }
+    if (kind === 'paid') {
+      const invalid = validatePaymentReference(dialogInput)
+      if (invalid) return setDialogError(invalid)
+    }
+
+    setSubmitting(true)
+    setDialogError(null)
+    try {
+      let updated: CashoutRequest
+      if (kind === 'approve') updated = await financeApi.approveCashout(uyushmaId, cashout.id)
+      else if (kind === 'reject') updated = await financeApi.rejectCashout(uyushmaId, cashout.id, dialogInput)
+      else updated = await financeApi.markCashoutPaid(uyushmaId, cashout.id, dialogInput)
+
+      setCashouts((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+      setDialog(null)
+      showToast(
+        'success',
+        kind === 'approve'
+          ? `${updated.driver_name}: so‘rov tasdiqlandi. Mablag‘ “To‘landi” belgilanganda yechiladi.`
+          : kind === 'reject'
+            ? `${updated.driver_name}: so‘rov rad etildi, sabab audit jurnaliga yozildi.`
+            : `${updated.driver_name}: ${formatSom(updated.amount_uzs)} to‘landi, haydovchi balansidan yechildi.`,
+      )
+      reloadAll()
+    } catch (err) {
+      const message = errorMessage(err)
+      if (err instanceof ApiError && (err.status === 409 || err.status === 404)) {
+        // State changed elsewhere (another operator, insufficient balance, …): show why and resync.
+        setDialog(null)
+        showToast('error', message)
+        reloadAll()
+      } else {
+        setDialogError(message)
       }
-      return true;
-    });
-  }, [payments, selectedRouteId, selectedMethod, selectedStatus, searchQuery]);
-
-  // Cashout Actions
-  const handleApproveCashout = async (cshId: string) => {
-    if (!window.confirm("Ushbu pul yechish so'rovini tasdiqlaysizmi?")) return;
-    try {
-      const updated = await financeApi.approveCashout(uyushmaId, cshId);
-      setCashouts(prev => prev.map(c => (c.id === updated.id ? updated : c)));
-      setToastMessage("So'rov muvaffaqiyatli tasdiqlandi (Approved).");
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Xatolik yuz berdi');
-    }
-  };
-
-  const handleConfirmReject = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!rejectingCashout) return;
-    if (!rejectionReason.trim()) {
-      alert("Iltimos, rad etishning audit sababini kiriting.");
-      return;
-    }
-
-    setIsSubmittingReject(true);
-    try {
-      const updated = await financeApi.rejectCashout(uyushmaId, rejectingCashout.id, rejectionReason);
-      setCashouts(prev => prev.map(c => (c.id === updated.id ? updated : c)));
-      setRejectingCashout(null);
-      setRejectionReason('');
-      setToastMessage("So'rov rad etildi va audit yozuviga qayd qilindi.");
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Xatolik');
     } finally {
-      setIsSubmittingReject(false);
+      setSubmitting(false)
     }
-  };
+  }
 
-  const handleConfirmMarkPaid = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!payingCashout) return;
-    if (!paymentReference.trim()) {
-      alert("Iltimos, to'lov cheki yoki bank tranzaksiya raqamini kiriting.");
-      return;
-    }
+  // ── Derived ──
+  const periodLabel = FINANCE_PERIOD_LABELS[period]
+  const hasPaymentFilters = Boolean(debouncedSearch || routeId || paymentStatus || paymentMethod)
+  const firstRow = payments && payments.total > 0 ? (payments.page - 1) * payments.size + 1 : 0
+  const lastRow = payments ? Math.min(payments.total, payments.page * payments.size) : 0
+  const cashoutTotalShown = useMemo(() => cashouts.reduce((sum, c) => sum + c.amount_uzs, 0), [cashouts])
 
-    setIsSubmittingPay(true);
-    try {
-      const updated = await financeApi.markCashoutPaid(uyushmaId, payingCashout.id, paymentReference);
-      setCashouts(prev => prev.map(c => (c.id === updated.id ? updated : c)));
-      setPayingCashout(null);
-      setPaymentReference('');
-      setToastMessage("So'rov 'To'landi' deb belgilandi va kassa/bank hisobotiga kiritildi.");
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Xatolik');
-    } finally {
-      setIsSubmittingPay(false);
-    }
-  };
-
-  const formatUZS = (num: number) => `${num.toLocaleString('uz-UZ')} UZS`;
+  const amount = (value: number | undefined) => (summaryLoading && !summary ? '…' : formatSom(value ?? null))
 
   return (
     <div className="uyushma-page-container">
@@ -149,494 +323,672 @@ export function UyushmaPayments() {
         <div className="uyushma-page-header__left">
           <h1>
             <i className="ri-wallet-3-fill" style={{ color: 'var(--accent-primary)' }} />
-            Moliya va to'lovlar operatsiyalari
+            Moliya va to‘lovlar
           </h1>
-          <p>
-            Barcha yo'nalishlar bo'yicha tushumlar, qaytarishlar (refunds) va haydovchilarning pul chiqarish so'rovlari nazorati
-          </p>
+          <p>Yo‘l haqi to‘lovlari, qaytarishlar va haydovchilarning pul yechish so‘rovlari</p>
         </div>
 
         <div className="uyushma-page-header__actions">
-          <button className="btn-secondary-action" onClick={loadData}>
-            <i className="ri-refresh-line" />
+          <div className="fin-chips" role="group" aria-label="Davr">
+            {PERIODS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                className={`fin-chip ${period === p ? 'active' : ''}`}
+                onClick={() => setPeriod(p)}
+                aria-pressed={period === p}
+              >
+                {FINANCE_PERIOD_LABELS[p]}
+              </button>
+            ))}
+          </div>
+          <button className="btn-secondary-action" onClick={reloadAll} disabled={paymentsLoading || summaryLoading || cashoutsLoading}>
+            <i className={`ri-refresh-line ${paymentsLoading || summaryLoading || cashoutsLoading ? 'ri-spin' : ''}`} />
             Yangilash
           </button>
         </div>
       </div>
 
-      {/* Financial KPIs Grid */}
+      {summaryError && (
+        <div className="fin-alert" role="alert">
+          <i className="ri-error-warning-fill" />
+          <div>Hisobot: {summaryError}</div>
+        </div>
+      )}
+
+      {/* KPI cards */}
       <div className="finance-kpis-grid">
         <div className="finance-kpi-card">
           <div className="finance-kpi-card__top">
-            <span className="finance-kpi-card__title">Jami tushum (Gross)</span>
+            <span className="finance-kpi-card__title">Jami tushum · {periodLabel}</span>
             <div className="finance-kpi-card__icon" style={{ background: 'var(--accent-subtle)', color: 'var(--accent-primary)' }}>
               <i className="ri-arrow-down-circle-line" />
             </div>
           </div>
-          <div className="finance-kpi-card__amount success">
-            {formatUZS(summary?.gross_revenue || 0)}
-          </div>
+          <div className="finance-kpi-card__amount success">{amount(summary?.gross_revenue)}</div>
           <span className="finance-kpi-card__subtext">
-            {summary?.completed_rides_count || 0} ta muvaffaqiyatli qatnov to'lovi
+            {summary ? `${summary.completed_rides_count} ta muvaffaqiyatli to‘lov` : '—'}
           </span>
         </div>
 
         <div className="finance-kpi-card">
           <div className="finance-kpi-card__top">
-            <span className="finance-kpi-card__title">Qaytarilgan (Refunds)</span>
-            <div className="finance-kpi-card__icon" style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--warning)' }}>
+            <span className="finance-kpi-card__title">Qaytarilgan · {periodLabel}</span>
+            <div className="finance-kpi-card__icon" style={{ background: 'var(--warning-subtle)', color: 'var(--warning)' }}>
               <i className="ri-arrow-go-back-line" />
             </div>
           </div>
-          <div className="finance-kpi-card__amount warning">
-            {formatUZS(summary?.total_refunds || 0)}
-          </div>
+          <div className="finance-kpi-card__amount warning">{amount(summary?.total_refunds)}</div>
           <span className="finance-kpi-card__subtext">
-            {summary?.refunded_rides_count || 0} ta bekor qilingan tranzaksiya
+            {summary ? `${summary.refunded_rides_count} ta qaytarilgan to‘lov` : '—'}
           </span>
         </div>
 
         <div className="finance-kpi-card">
           <div className="finance-kpi-card__top">
-            <span className="finance-kpi-card__title">Sof tushum (Net)</span>
+            <span className="finance-kpi-card__title">Sof tushum · {periodLabel}</span>
             <div className="finance-kpi-card__icon" style={{ background: 'var(--success-subtle)', color: 'var(--success)' }}>
               <i className="ri-safe-2-line" />
             </div>
           </div>
-          <div className="finance-kpi-card__amount">
-            {formatUZS(summary?.net_revenue || 0)}
-          </div>
-          <span className="finance-kpi-card__subtext">
-            Komissiyalar va qaytarishlardan so'ng
-          </span>
+          <div className="finance-kpi-card__amount">{amount(summary?.net_revenue)}</div>
+          <span className="finance-kpi-card__subtext">Qaytarishlar va tizim komissiyasidan so‘ng</span>
         </div>
 
         <div className="finance-kpi-card">
           <div className="finance-kpi-card__top">
-            <span className="finance-kpi-card__title">Kutilayotgan pul chiqarish</span>
-            <div className="finance-kpi-card__icon" style={{ background: 'rgba(239, 68, 68, 0.15)', color: 'var(--danger)' }}>
+            <span className="finance-kpi-card__title">To‘lanishi kutilayotgan</span>
+            <div className="finance-kpi-card__icon" style={{ background: 'var(--danger-subtle)', color: 'var(--danger)' }}>
               <i className="ri-hand-coin-line" />
             </div>
           </div>
-          <div className="finance-kpi-card__amount danger">
-            {formatUZS(summary?.pending_cashouts_total || 0)}
-          </div>
-          <span className="finance-kpi-card__subtext">
-            {cashouts.filter(c => c.status === 'pending' || c.status === 'approved').length} ta so'rov kutilmoqda
-          </span>
+          <div className="finance-kpi-card__amount danger">{amount(summary?.pending_cashouts_total)}</div>
+          <span className="finance-kpi-card__subtext">Kutilayotgan va tasdiqlangan so‘rovlar (joriy holat)</span>
         </div>
       </div>
 
-      {/* Segmented Navigation Tabs */}
-      <div className="finance-nav-tabs">
+      {/* Tabs */}
+      <div className="finance-nav-tabs" role="tablist">
         <button
+          role="tab"
+          aria-selected={activeTab === 'payments'}
           className={`finance-tab-btn ${activeTab === 'payments' ? 'active' : ''}`}
           onClick={() => setActiveTab('payments')}
         >
           <i className="ri-file-list-3-line" />
-          Barcha to'lovlar va qaytarishlar
-          <span className="badge-pill">{payments.length}</span>
+          To‘lovlar va qaytarishlar
+          {payments && <span className="badge-pill">{payments.total}</span>}
         </button>
-
         <button
+          role="tab"
+          aria-selected={activeTab === 'cashouts'}
           className={`finance-tab-btn ${activeTab === 'cashouts' ? 'active' : ''}`}
           onClick={() => setActiveTab('cashouts')}
         >
           <i className="ri-hand-coin-line" />
-          Pul yechish so'rovlari
-          <span className="badge-pill" style={{ background: 'var(--warning-subtle)', color: 'var(--warning)' }}>
-            {cashouts.filter(c => c.status === 'pending').length} yangi
-          </span>
+          Pul yechish so‘rovlari
+          {pendingCount !== null && pendingCount > 0 && (
+            <span className="badge-pill" style={{ background: 'var(--warning-subtle)', color: 'var(--warning)' }}>
+              {pendingCount} yangi
+            </span>
+          )}
         </button>
-
         <button
+          role="tab"
+          aria-selected={activeTab === 'summary'}
           className={`finance-tab-btn ${activeTab === 'summary' ? 'active' : ''}`}
           onClick={() => setActiveTab('summary')}
         >
           <i className="ri-pie-chart-line" />
-          Tizim komissiyasi va hisobot
+          Hisobot
         </button>
       </div>
 
-      {/* ── Tab 1: Payments & Refunds List ── */}
+      {/* ── Payments ── */}
       {activeTab === 'payments' && (
         <>
-          {/* Filters Bar */}
           <div className="uyushma-toolbar">
             <div className="uyushma-search-input">
-              <i className="ri-search-line" />
+              <i className={paymentsLoading && searchInput ? 'ri-loader-4-line ri-spin' : 'ri-search-line'} />
               <input
-                type="text"
-                placeholder="Tranzaksiya ID, haydovchi yoki transport raqami..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
+                type="search"
+                placeholder="Tranzaksiya raqami, davlat raqami, ichki ID yoki haydovchi…"
+                value={searchInput}
+                maxLength={PAYMENTS_SEARCH_MAX_LENGTH}
+                onChange={(e) => setSearchInput(e.target.value)}
+                aria-label="To‘lovlarni qidirish"
               />
             </div>
 
             <div className="finance-filters-row">
               <select
                 className="finance-filter-select"
-                value={selectedRouteId}
-                onChange={e => setSelectedRouteId(e.target.value)}
+                value={routeId}
+                onChange={(e) => setRouteId(e.target.value)}
+                aria-label="Yo‘nalish"
+                disabled={Boolean(routesError)}
+                title={routesError ?? undefined}
               >
-                <option value="">Barcha yo'nalishlar</option>
-                {routes.map(r => (
-                  <option key={r.id} value={r.id}>№ {r.route_number}</option>
+                <option value="">Barcha yo‘nalishlar</option>
+                {routes.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    № {r.route_number} — {r.route_name}
+                  </option>
                 ))}
               </select>
 
               <select
                 className="finance-filter-select"
-                value={selectedMethod}
-                onChange={e => setSelectedMethod(e.target.value)}
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value as FinancePaymentMethod | '')}
+                aria-label="To‘lov usuli"
               >
-                <option value="all">Barcha to'lov usullari</option>
-                <option value="click">Click</option>
-                <option value="payme">Payme</option>
-                <option value="nfc">NFC (Humo/Uzcard)</option>
-                <option value="wallet">Hamyon</option>
+                <option value="">Barcha to‘lov usullari</option>
+                {(Object.keys(PAYMENT_METHOD_LABELS) as FinancePaymentMethod[]).map((m) => (
+                  <option key={m} value={m}>
+                    {PAYMENT_METHOD_LABELS[m]}
+                  </option>
+                ))}
               </select>
 
               <select
                 className="finance-filter-select"
-                value={selectedStatus}
-                onChange={e => setSelectedStatus(e.target.value)}
+                value={paymentStatus}
+                onChange={(e) => setPaymentStatus(e.target.value as FinancePaymentStatus | '')}
+                aria-label="Holat"
               >
-                <option value="all">Barcha holatlar</option>
-                <option value="completed">Muvaffaqiyatli</option>
-                <option value="refunded">Qaytarilgan (Refund)</option>
+                <option value="">Barcha holatlar</option>
+                {(Object.keys(PAYMENT_STATUS_LABELS) as FinancePaymentStatus[]).map((s) => (
+                  <option key={s} value={s}>
+                    {PAYMENT_STATUS_LABELS[s]}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
 
-          {/* Payments Table */}
+          {paymentsError && (
+            <div className="fin-alert" role="alert">
+              <i className="ri-error-warning-fill" />
+              <div style={{ flex: 1 }}>{paymentsError}</div>
+              <button type="button" className="btn-secondary-action" onClick={reloadAll}>
+                Qayta urinish
+              </button>
+            </div>
+          )}
+
           <div className="uyushma-table-wrapper">
             <table className="uyushma-table">
               <thead>
                 <tr>
-                  <th>Tranzaksiya ID</th>
-                  <th>Yo'nalish</th>
-                  <th>Transport & Haydovchi</th>
-                  <th>To'lov usuli</th>
+                  <th>Tranzaksiya</th>
+                  <th>Yo‘nalish</th>
+                  <th>Transport va haydovchi</th>
+                  <th>To‘lov usuli</th>
                   <th>Summa</th>
                   <th>Holat</th>
                   <th>Vaqt</th>
                 </tr>
               </thead>
-              <tbody>
-                {isLoading ? (
+              <tbody className={paymentsLoading && payments ? 'fin-tbody--loading' : undefined}>
+                {paymentsLoading && !payments ? (
                   <tr>
-                    <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-secondary)' }}>
-                      <i className="ri-loader-4-line ri-spin" style={{ fontSize: '1.5rem', color: 'var(--accent-primary)' }} />
-                      <div style={{ marginTop: '0.5rem' }}>Yuklanmoqda...</div>
+                    <td colSpan={7} className="fin-table-state">
+                      <i className="ri-loader-4-line ri-spin" />
+                      <div>Yuklanmoqda…</div>
                     </td>
                   </tr>
-                ) : filteredPayments.length === 0 ? (
+                ) : !payments || payments.items.length === 0 ? (
                   <tr>
-                    <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>
-                      To'lovlar topilmadi.
+                    <td colSpan={7} className="fin-table-state">
+                      {paymentsError
+                        ? 'Ma’lumot yuklanmadi.'
+                        : hasPaymentFilters
+                          ? 'Tanlangan filtrlar bo‘yicha to‘lov topilmadi.'
+                          : `${periodLabel}: to‘lovlar hali yo‘q.`}
                     </td>
                   </tr>
                 ) : (
-                  filteredPayments.map(p => (
+                  payments.items.map((p) => (
                     <tr key={p.id}>
                       <td>
-                        <strong style={{ fontFamily: 'monospace', fontSize: '0.825rem' }}>{p.reference_id}</strong>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
-                          {p.passenger_identifier || 'Mijoz'}
+                        <strong className="fin-mono">{p.reference}</strong>
+                        <div className="fin-sub">{p.passenger_label}</div>
+                      </td>
+                      <td>
+                        <span className="route-number-badge">№ {p.route_number || '—'}</span>
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{p.driver_name || '—'}</div>
+                        <span className="vehicle-plate-badge">{vehicleLabel(p.vehicle_plate, p.vehicle_internal_id)}</span>
+                        {p.vehicle_plate && <div className="fin-sub fin-mono">{p.vehicle_internal_id}</div>}
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: 700 }}>{labelOf(PAYMENT_METHOD_LABELS, p.payment_method)}</div>
+                        <div className="fin-sub">{labelOf(IDENTIFICATION_METHOD_LABELS, p.identification_method)}</div>
+                      </td>
+                      <td>
+                        <div className={p.status === 'completed' ? 'fin-amount fin-amount--in' : 'fin-amount fin-amount--void'}>
+                          {formatSom(p.amount_uzs)}
                         </div>
-                      </td>
-                      <td>
-                        <span className="route-number-badge">№ {p.route_number}</span>
-                      </td>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>{p.driver_name}</div>
-                        <span className="vehicle-plate-badge">{p.vehicle_plate}</span>
-                      </td>
-                      <td>
-                        <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase' }}>
-                          {p.method}
-                        </span>
-                      </td>
-                      <td>
-                        <div style={{ fontWeight: 700, color: p.status === 'refunded' ? 'var(--text-tertiary)' : 'var(--success)' }}>
-                          {p.status === 'refunded' ? '-' : '+'}
-                          {formatUZS(p.amount)}
-                        </div>
-                        {p.status === 'refunded' && (
-                          <div style={{ fontSize: '0.675rem', color: 'var(--warning)' }}>
-                            {p.refund_reason || 'Qaytarilgan'}
+                        {p.commission_uzs > 0 && (
+                          <div className="fin-sub">
+                            Komissiya {formatSom(p.commission_uzs)} · sof {formatSom(p.net_amount_uzs)}
                           </div>
                         )}
                       </td>
                       <td>
-                        <span className={`status-pill ${p.status === 'completed' ? 'active' : 'inactive'}`}>
-                          {p.status === 'completed' ? 'Muvaffaqiyatli' : 'Qaytarilgan'}
-                        </span>
+                        <span className={paymentStatusClass(p.status)}>{labelOf(PAYMENT_STATUS_LABELS, p.status)}</span>
+                        {p.status === 'refunded' && (
+                          <div className="fin-sub" style={{ color: 'var(--warning)', maxWidth: 220 }}>
+                            {p.refund_reason || 'Sabab ko‘rsatilmagan'}
+                            {p.refunded_at && <> · {formatDateTime(p.refunded_at)}</>}
+                          </div>
+                        )}
                       </td>
-                      <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                        {new Date(p.created_at).toLocaleString('uz-UZ', {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                      <td className="fin-nowrap" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                        {formatDateTime(p.created_at)}
                       </td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
+
+            {payments && payments.total > 0 && (
+              <div className="fin-pagination">
+                <span>
+                  {firstRow}–{lastRow} / {payments.total}
+                </span>
+                <div className="fin-pagination__controls">
+                  <select
+                    className="finance-filter-select"
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    aria-label="Sahifadagi qatorlar"
+                  >
+                    {PAGE_SIZES.map((s) => (
+                      <option key={s} value={s}>
+                        {s} ta
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn-secondary-action"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={paymentsLoading || payments.page <= 1}
+                    aria-label="Oldingi sahifa"
+                  >
+                    <i className="ri-arrow-left-s-line" />
+                  </button>
+                  <span className="fin-sub" style={{ margin: 0 }}>
+                    {payments.page} / {payments.pages}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-secondary-action"
+                    onClick={() => setPage((p) => p + 1)}
+                    disabled={paymentsLoading || payments.page >= payments.pages}
+                    aria-label="Keyingi sahifa"
+                  >
+                    <i className="ri-arrow-right-s-line" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}
 
-      {/* ── Tab 2: Cash-out Requests Approval & Audit ── */}
+      {/* ── Cash-outs ── */}
       {activeTab === 'cashouts' && (
-        <div className="uyushma-table-wrapper">
-          <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>
-                Haydovchilarning pul chiqarish so'rovlari ({cashouts.length})
-              </h3>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0' }}>
-                Bank kartasiga, hisob raqamga yoki kassadan naqd berish uchun tasdiqlash va to'lash jarayoni
-              </p>
+        <>
+          <div className="uyushma-toolbar">
+            <div className="fin-chips" role="group" aria-label="So‘rov holati">
+              {CASHOUT_FILTERS.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  className={`fin-chip ${cashoutFilter === f ? 'active' : ''}`}
+                  onClick={() => setCashoutFilter(f)}
+                  aria-pressed={cashoutFilter === f}
+                >
+                  {f === 'all' ? 'Barchasi' : CASHOUT_STATUS_LABELS[f]}
+                  {f === 'pending' && pendingCount ? <span className="fin-chip__count">{pendingCount}</span> : null}
+                </button>
+              ))}
             </div>
+            <span className="fin-sub" style={{ margin: 0 }}>
+              Haydovchi balansidan mablag‘ faqat “To‘landi” belgilanganda yechiladi
+            </span>
           </div>
 
-          <table className="uyushma-table">
-            <thead>
-              <tr>
-                <th>Haydovchi</th>
-                <th>Transport</th>
-                <th>Chiqariladigan summa</th>
-                <th>To'lov rekvizitlari</th>
-                <th>Holat</th>
-                <th>So'rov vaqti</th>
-                <th style={{ textAlign: 'right' }}>Amallar</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cashouts.length === 0 ? (
+          {cashoutsError && (
+            <div className="fin-alert" role="alert">
+              <i className="ri-error-warning-fill" />
+              <div style={{ flex: 1 }}>{cashoutsError}</div>
+              <button type="button" className="btn-secondary-action" onClick={reloadAll}>
+                Qayta urinish
+              </button>
+            </div>
+          )}
+
+          <div className="uyushma-table-wrapper">
+            <table className="uyushma-table">
+              <thead>
                 <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>
-                    Pul yechish so'rovlari mavjud emas.
-                  </td>
+                  <th>Haydovchi</th>
+                  <th>Transport</th>
+                  <th>Summa</th>
+                  <th>Usul va rekvizitlar</th>
+                  <th>Holat</th>
+                  <th>So‘rov vaqti</th>
+                  <th style={{ textAlign: 'right' }}>Amallar</th>
                 </tr>
-              ) : (
-                cashouts.map(c => (
-                  <tr key={c.id}>
-                    <td>
-                      <div style={{ fontWeight: 600 }}>{c.driver_name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{c.driver_phone}</div>
+              </thead>
+              <tbody className={cashoutsLoading && cashouts.length ? 'fin-tbody--loading' : undefined}>
+                {cashoutsLoading && cashouts.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="fin-table-state">
+                      <i className="ri-loader-4-line ri-spin" />
+                      <div>Yuklanmoqda…</div>
                     </td>
-                    <td>
-                      <span className="vehicle-plate-badge">{c.vehicle_plate}</span>
+                  </tr>
+                ) : cashouts.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="fin-table-state">
+                      {cashoutsError
+                        ? 'Ma’lumot yuklanmadi.'
+                        : cashoutFilter === 'all'
+                          ? 'Pul yechish so‘rovlari hali yo‘q.'
+                          : `“${CASHOUT_STATUS_LABELS[cashoutFilter]}” holatidagi so‘rov yo‘q.`}
                     </td>
-                    <td>
-                      <strong style={{ fontSize: '1rem', color: 'var(--text-primary)' }}>
-                        {formatUZS(c.amount)}
-                      </strong>
-                    </td>
-                    <td>
-                      <div style={{ fontSize: '0.85rem' }}>{c.payout_details}</div>
-                      {c.payment_reference && (
-                        <div style={{ fontSize: '0.7rem', color: 'var(--accent-primary)', fontFamily: 'monospace' }}>
-                          Chek: {c.payment_reference}
-                        </div>
-                      )}
-                      {c.rejection_reason && (
-                        <div style={{ fontSize: '0.7rem', color: 'var(--danger)' }}>
-                          Sabab: {c.rejection_reason}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <span className={`status-pill ${c.status === 'paid' ? 'active' : c.status === 'rejected' ? 'inactive' : 'inactive'}`}
-                        style={{
-                          background: c.status === 'pending' ? 'var(--warning-subtle)' : undefined,
-                          color: c.status === 'pending' ? 'var(--warning)' : undefined,
-                        }}
-                      >
-                        {c.status === 'pending' && 'Kutilmoqda'}
-                        {c.status === 'approved' && 'Tasdiqlangan'}
-                        {c.status === 'paid' && 'To\'langan'}
-                        {c.status === 'rejected' && 'Rad etilgan'}
-                      </span>
-                    </td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                      {new Date(c.created_at).toLocaleString('uz-UZ', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </td>
-                    <td>
-                      <div className="cashout-action-btns" style={{ justifyContent: 'flex-end' }}>
-                        {c.status === 'pending' && (
+                  </tr>
+                ) : (
+                  cashouts.map((c) => (
+                    <tr key={c.id}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{c.driver_name || '—'}</div>
+                        {c.driver_phone && (
+                          <a className="fin-sub fin-link" href={`tel:${c.driver_phone.replace(/\s+/g, '')}`}>
+                            {c.driver_phone}
+                          </a>
+                        )}
+                      </td>
+                      <td>
+                        {c.vehicle_plate || c.vehicle_internal_id ? (
                           <>
-                            <button
-                              className="btn-approve-cashout"
-                              onClick={() => handleApproveCashout(c.id)}
-                              title="Tasdiqlash"
-                            >
+                            <span className="vehicle-plate-badge">{vehicleLabel(c.vehicle_plate, c.vehicle_internal_id)}</span>
+                            {c.vehicle_plate && c.vehicle_internal_id && <div className="fin-sub fin-mono">{c.vehicle_internal_id}</div>}
+                          </>
+                        ) : (
+                          <span className="fin-sub">—</span>
+                        )}
+                      </td>
+                      <td>
+                        <strong style={{ fontSize: '1rem' }}>{formatSom(c.amount_uzs)}</strong>
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{labelOf(CASHOUT_METHOD_LABELS, c.method)}</div>
+                        {c.payout_details && <div className="fin-sub">{c.payout_details}</div>}
+                        {c.payment_reference && (
+                          <div className="fin-sub fin-mono" style={{ color: 'var(--accent-primary)' }}>
+                            Chek: {c.payment_reference}
+                          </div>
+                        )}
+                        {c.rejection_reason && (
+                          <div className="fin-sub" style={{ color: 'var(--danger)' }}>
+                            Sabab: {c.rejection_reason}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <span className={cashoutStatusClass(c.status)}>{labelOf(CASHOUT_STATUS_LABELS, c.status)}</span>
+                        {(c.paid_at || c.processed_at) && (
+                          <div className="fin-sub">
+                            {formatDateTime(c.paid_at || c.processed_at)}
+                            {c.processed_by && <> · {c.processed_by}</>}
+                          </div>
+                        )}
+                      </td>
+                      <td className="fin-nowrap" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                        {formatDateTime(c.created_at)}
+                      </td>
+                      <td>
+                        <div className="cashout-action-btns" style={{ justifyContent: 'flex-end' }}>
+                          {canApproveCashout(c.status) && (
+                            <button className="btn-approve-cashout" onClick={() => openDialog('approve', c)}>
                               <i className="ri-check-line" />
                               Tasdiqlash
                             </button>
-                            <button
-                              className="btn-reject-cashout"
-                              onClick={() => {
-                                setRejectingCashout(c);
-                                setRejectionReason('');
-                              }}
-                              title="Rad etish (Audit)"
-                            >
+                          )}
+                          {canMarkCashoutPaid(c.status) && (
+                            <button className="btn-mark-paid" onClick={() => openDialog('paid', c)}>
+                              <i className="ri-bank-card-line" />
+                              To‘landi
+                            </button>
+                          )}
+                          {canRejectCashout(c.status) && (
+                            <button className="btn-reject-cashout" onClick={() => openDialog('reject', c)}>
                               <i className="ri-close-line" />
                               Rad etish
                             </button>
-                          </>
-                        )}
-
-                        {c.status === 'approved' && (
-                          <button
-                            className="btn-mark-paid"
-                            onClick={() => {
-                              setPayingCashout(c);
-                              setPaymentReference(`CHQ-${Date.now().toString().slice(-6)}`);
-                            }}
-                            title="To'landi deb belgilash"
-                          >
-                            <i className="ri-bank-card-line" />
-                            To'landi (Chek)
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+            {cashouts.length > 0 && (
+              <div className="fin-pagination">
+                <span>
+                  {cashouts.length} ta so‘rov · jami {formatSom(cashoutTotalShown)}
+                </span>
+              </div>
+            )}
+          </div>
+        </>
       )}
 
-      {/* ── Tab 3: Summary Breakdown ── */}
+      {/* ── Summary ── */}
       {activeTab === 'summary' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.25rem' }}>
+        <div className="fin-summary-grid">
           <div className="finance-kpi-card">
-            <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 1rem 0' }}>
-              Daromad va Qaytarishlar taqsimoti
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.85rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Umumiy qatnov to'lovlari (Gross):</span>
-                <strong>{formatUZS(summary?.gross_revenue || 0)}</strong>
+            <h3 className="fin-card-title">Tushum taqsimoti · {periodLabel}</h3>
+            {summary ? (
+              <div className="fin-rows">
+                <div className="fin-row">
+                  <span>Barcha to‘lovlar (gross)</span>
+                  <strong>{formatSom(summary.gross_revenue)}</strong>
+                </div>
+                <div className="fin-row">
+                  <span>Yo‘lovchilarga qaytarilgan</span>
+                  <strong style={{ color: 'var(--warning)' }}>−{formatSom(summary.total_refunds)}</strong>
+                </div>
+                <div className="fin-row">
+                  <span>Tizim xizmat haqi</span>
+                  <strong style={{ color: 'var(--danger)' }}>−{formatSom(summary.platform_commission)}</strong>
+                </div>
+                <div className="fin-row fin-row--total">
+                  <span>Sof tushum</span>
+                  <span style={{ color: 'var(--success)' }}>{formatSom(summary.net_revenue)}</span>
+                </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Yo'lovchilarga qaytarilgan (Refunds):</span>
-                <strong style={{ color: 'var(--warning)' }}>-{formatUZS(summary?.total_refunds || 0)}</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Tizim xizmat haqi (Platform commission):</span>
-                <strong style={{ color: 'var(--danger)' }}>-{formatUZS(summary?.platform_commission || 0)}</strong>
-              </div>
-              <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontSize: '1rem', fontWeight: 800 }}>
-                <span>Sof tushum (Net):</span>
-                <span style={{ color: 'var(--success)' }}>{formatUZS(summary?.net_revenue || 0)}</span>
-              </div>
-            </div>
+            ) : (
+              <div className="fin-sub">{summaryLoading ? 'Yuklanmoqda…' : summaryError ?? '—'}</div>
+            )}
           </div>
 
           <div className="finance-kpi-card">
-            <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 1rem 0' }}>
-              To'lovlar audit ma'lumotlari
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.85rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Haydovchilarga to'lab berilgan pul:</span>
-                <strong style={{ color: 'var(--success)' }}>{formatUZS(summary?.paid_cashouts_total || 0)}</strong>
+            <h3 className="fin-card-title">Qatnovlar va pul yechish</h3>
+            {summary ? (
+              <div className="fin-rows">
+                <div className="fin-row">
+                  <span>Muvaffaqiyatli to‘lovlar · {periodLabel}</span>
+                  <strong>{summary.completed_rides_count} ta</strong>
+                </div>
+                <div className="fin-row">
+                  <span>Qaytarilgan to‘lovlar · {periodLabel}</span>
+                  <strong>{summary.refunded_rides_count} ta</strong>
+                </div>
+                <div className="fin-row">
+                  <span>Haydovchilarga to‘lab berilgan (jami)</span>
+                  <strong style={{ color: 'var(--success)' }}>{formatSom(summary.paid_cashouts_total)}</strong>
+                </div>
+                <div className="fin-row">
+                  <span>To‘lanishi kutilayotgan (joriy)</span>
+                  <strong style={{ color: 'var(--warning)' }}>{formatSom(summary.pending_cashouts_total)}</strong>
+                </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Kutilayotgan yechib olishlar:</span>
-                <strong style={{ color: 'var(--warning)' }}>{formatUZS(summary?.pending_cashouts_total || 0)}</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Jami muvaffaqiyatli tranzaksiyalar:</span>
-                <strong>{summary?.completed_rides_count || 0} ta</strong>
-              </div>
-            </div>
+            ) : (
+              <div className="fin-sub">{summaryLoading ? 'Yuklanmoqda…' : summaryError ?? '—'}</div>
+            )}
           </div>
         </div>
       )}
 
-      {/* ── Modal: Destructive Cashout Rejection with Audit Reason ── */}
-      {rejectingCashout && (
-        <div className="uyushma-modal-overlay" onClick={() => !isSubmittingReject && setRejectingCashout(null)}>
-          <div className="uyushma-modal-card" onClick={e => e.stopPropagation()}>
+      {/* ── Cash-out action dialog ── */}
+      {dialog && (
+        <div className="uyushma-modal-overlay" onClick={closeDialog}>
+          <div
+            className="uyushma-modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cashout-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="uyushma-modal-header">
-              <h3>
-                <i className="ri-close-circle-fill" style={{ color: 'var(--danger)' }} />
-                Pul chiqarish so'rovini rad etish (Audit)
+              <h3 id="cashout-dialog-title">
+                {dialog.kind === 'approve' && (
+                  <>
+                    <i className="ri-check-double-line" style={{ color: 'var(--success)' }} />
+                    So‘rovni tasdiqlash
+                  </>
+                )}
+                {dialog.kind === 'reject' && (
+                  <>
+                    <i className="ri-close-circle-fill" style={{ color: 'var(--danger)' }} />
+                    So‘rovni rad etish
+                  </>
+                )}
+                {dialog.kind === 'paid' && (
+                  <>
+                    <i className="ri-bank-card-line" style={{ color: 'var(--accent-primary)' }} />
+                    To‘langan deb belgilash
+                  </>
+                )}
               </h3>
-              <button
-                className="btn-modal-close"
-                onClick={() => setRejectingCashout(null)}
-                disabled={isSubmittingReject}
-              >
+              <button type="button" className="btn-modal-close" onClick={closeDialog} disabled={submitting} aria-label="Yopish">
                 <i className="ri-close-line" />
               </button>
             </div>
 
-            <form onSubmit={handleConfirmReject}>
+            <form onSubmit={submitDialog}>
               <div className="uyushma-modal-body">
-                <div className="audit-warning-box">
-                  <i className="ri-alert-line" />
-                  <div>
-                    <strong>Moliyaviy destruktiv amal:</strong> Rad etish haqidagi audit sababi tizimda doimiy saqlanadi va haydovchi ilovasida aks etadi.
+                <div className="fin-dialog-summary">
+                  <div className="fin-sub" style={{ margin: 0 }}>
+                    {dialog.cashout.driver_name} · {dialog.cashout.driver_phone}
+                  </div>
+                  <div className="fin-dialog-summary__amount">{formatSom(dialog.cashout.amount_uzs)}</div>
+                  <div className="fin-sub" style={{ margin: 0 }}>
+                    {labelOf(CASHOUT_METHOD_LABELS, dialog.cashout.method)}
+                    {dialog.cashout.payout_details && <> · {dialog.cashout.payout_details}</>}
                   </div>
                 </div>
 
-                <div style={{ background: 'var(--surface-elevated)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Haydovchi va Summa</div>
-                  <div style={{ fontWeight: 700, fontSize: '1rem' }}>
-                    {rejectingCashout.driver_name} — {formatUZS(rejectingCashout.amount)}
+                {dialog.kind === 'approve' && (
+                  <div className="rule-guard-banner">
+                    <i className="ri-information-line" />
+                    <div>
+                      Tasdiqlash haydovchi balansini hali o‘zgartirmaydi. Mablag‘ haqiqatda berilgach, “To‘landi” tugmasi orqali
+                      chek raqamini kiriting — shunda balansdan yechiladi.
+                    </div>
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.2rem' }}>
-                    {rejectingCashout.payout_details}
-                  </div>
-                </div>
+                )}
 
-                <div className="uyushma-form-group">
-                  <label>Rad etish sababi (Audit reason) *</label>
-                  <textarea
-                    className="uyushma-textarea"
-                    rows={3}
-                    placeholder="Masalan: Karta raqami noto'g'ri ko'rsatilgan yoki haydovchining shaxsiy hisobida qarzdorlik mavjud..."
-                    value={rejectionReason}
-                    onChange={e => setRejectionReason(e.target.value)}
-                    required
-                  />
-                </div>
+                {dialog.kind === 'reject' && (
+                  <>
+                    <div className="audit-warning-box">
+                      <i className="ri-alert-line" />
+                      <div>Rad etish sababi audit jurnaliga yoziladi va haydovchiga ko‘rsatiladi.</div>
+                    </div>
+                    <div className="uyushma-form-group">
+                      <label htmlFor="cashout-reject-reason">Rad etish sababi *</label>
+                      <textarea
+                        id="cashout-reject-reason"
+                        className="uyushma-textarea"
+                        rows={3}
+                        maxLength={REJECT_REASON_MAX_LENGTH}
+                        placeholder="Masalan: karta raqami noto‘g‘ri ko‘rsatilgan"
+                        value={dialogInput}
+                        onChange={(e) => setDialogInput(e.target.value)}
+                        autoFocus
+                      />
+                      <span className="hint">
+                        Kamida 3 ta belgi · {dialogInput.trim().length}/{REJECT_REASON_MAX_LENGTH}
+                      </span>
+                    </div>
+                  </>
+                )}
+
+                {dialog.kind === 'paid' && (
+                  <>
+                    <div className="audit-warning-box">
+                      <i className="ri-alert-line" />
+                      <div>
+                        Tasdiqlaganingizda haydovchi balansidan <strong>{formatSom(dialog.cashout.amount_uzs)}</strong> yechiladi. Bu
+                        amalni ortga qaytarib bo‘lmaydi.
+                      </div>
+                    </div>
+                    <div className="uyushma-form-group">
+                      <label htmlFor="cashout-payment-reference">Kassa orderi / bank tranzaksiya raqami *</label>
+                      <input
+                        id="cashout-payment-reference"
+                        type="text"
+                        className="uyushma-input"
+                        maxLength={PAYMENT_REFERENCE_MAX_LENGTH}
+                        placeholder="Masalan: KO-000123"
+                        value={dialogInput}
+                        onChange={(e) => setDialogInput(e.target.value)}
+                        autoFocus
+                      />
+                      <span className="hint">Haqiqiy to‘lov hujjati raqami (audit uchun saqlanadi)</span>
+                    </div>
+                  </>
+                )}
+
+                {dialogError && (
+                  <div className="rule-conflict-alert" role="alert">
+                    <i className="ri-error-warning-fill" />
+                    <div>{dialogError}</div>
+                  </div>
+                )}
               </div>
 
               <div className="uyushma-modal-footer">
-                <button
-                  type="button"
-                  className="btn-secondary-action"
-                  onClick={() => setRejectingCashout(null)}
-                  disabled={isSubmittingReject}
-                >
+                <button type="button" className="btn-secondary-action" onClick={closeDialog} disabled={submitting}>
                   Bekor qilish
                 </button>
                 <button
                   type="submit"
                   className="btn-primary-action"
-                  style={{ background: 'var(--danger)' }}
-                  disabled={isSubmittingReject || !rejectionReason.trim()}
+                  style={dialog.kind === 'reject' ? { background: 'var(--danger)' } : undefined}
+                  disabled={
+                    submitting ||
+                    (dialog.kind === 'reject' && validateRejectReason(dialogInput) !== null) ||
+                    (dialog.kind === 'paid' && validatePaymentReference(dialogInput) !== null)
+                  }
                 >
-                  {isSubmittingReject ? 'Rad etilmoqda...' : 'Rad etishni tasdiqlash'}
+                  {submitting
+                    ? 'Saqlanmoqda…'
+                    : dialog.kind === 'approve'
+                      ? 'Tasdiqlash'
+                      : dialog.kind === 'reject'
+                        ? 'Rad etish'
+                        : 'To‘landi deb tasdiqlash'}
                 </button>
               </div>
             </form>
@@ -644,90 +996,15 @@ export function UyushmaPayments() {
         </div>
       )}
 
-      {/* ── Modal: Mark Cashout Paid with Transaction Reference ── */}
-      {payingCashout && (
-        <div className="uyushma-modal-overlay" onClick={() => !isSubmittingPay && setPayingCashout(null)}>
-          <div className="uyushma-modal-card" onClick={e => e.stopPropagation()}>
-            <div className="uyushma-modal-header">
-              <h3>
-                <i className="ri-bank-card-line" style={{ color: 'var(--accent-primary)' }} />
-                To'lov amalga oshirilganini tasdiqlash
-              </h3>
-              <button
-                className="btn-modal-close"
-                onClick={() => setPayingCashout(null)}
-                disabled={isSubmittingPay}
-              >
-                <i className="ri-close-line" />
-              </button>
-            </div>
-
-            <form onSubmit={handleConfirmMarkPaid}>
-              <div className="uyushma-modal-body">
-                <div style={{ background: 'var(--surface-elevated)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>To'lanadigan summa</div>
-                  <div style={{ fontWeight: 800, fontSize: '1.2rem', color: 'var(--success)' }}>
-                    {formatUZS(payingCashout.amount)}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-primary)', marginTop: '0.2rem' }}>
-                    {payingCashout.driver_name} ({payingCashout.payout_details})
-                  </div>
-                </div>
-
-                <div className="uyushma-form-group">
-                  <label>To'lov cheki yoki tranzaksiya raqami (Reference ID) *</label>
-                  <input
-                    type="text"
-                    className="uyushma-input"
-                    placeholder="Masalan: BNK-TXN-90241"
-                    value={paymentReference}
-                    onChange={e => setPaymentReference(e.target.value)}
-                    required
-                  />
-                  <span className="hint">Bank to'lov kvitansiyasi yoki kassa orderi raqami</span>
-                </div>
-              </div>
-
-              <div className="uyushma-modal-footer">
-                <button
-                  type="button"
-                  className="btn-secondary-action"
-                  onClick={() => setPayingCashout(null)}
-                  disabled={isSubmittingPay}
-                >
-                  Bekor qilish
-                </button>
-                <button
-                  type="submit"
-                  className="btn-primary-action"
-                  disabled={isSubmittingPay || !paymentReference.trim()}
-                >
-                  {isSubmittingPay ? 'Saqlanmoqda...' : 'To\'landi deb tasdiqlash'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Toast popup */}
-      {toastMessage && (
-        <div
-          className="payment-toast-banner success"
-          style={{ top: '5rem', zIndex: 9999 }}
-          onClick={() => setToastMessage(null)}
-        >
-          <div className="payment-toast-content">
-            <i className="ri-checkbox-circle-fill" />
-            <div className="payment-toast-text">
-              <p>{toastMessage}</p>
-            </div>
-          </div>
-          <button className="btn-toast-close" onClick={() => setToastMessage(null)}>
+      {toast && (
+        <div className={`fin-toast fin-toast--${toast.kind}`} role={toast.kind === 'error' ? 'alert' : 'status'}>
+          <i className={toast.kind === 'error' ? 'ri-error-warning-fill' : 'ri-checkbox-circle-fill'} />
+          <p>{toast.text}</p>
+          <button type="button" onClick={() => setToast(null)} aria-label="Yopish">
             <i className="ri-close-line" />
           </button>
         </div>
       )}
     </div>
-  );
+  )
 }

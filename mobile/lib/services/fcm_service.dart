@@ -1,171 +1,126 @@
-import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:http/http.dart' as http;
+
 import '../config/app_config.dart';
 
 typedef OnRouteDeepLink = void Function(String route);
 
+/// Firebase Cloud Messaging for the wrapper.
+///
+/// The device token is only handed to the web app; the web app registers it with the backend
+/// (`POST /notifications/device-token`) using the signed-in user's JWT, so the native side never
+/// talks to the API without authentication. Without FCM configuration push stays disabled —
+/// no placeholder tokens are ever produced.
 class FcmService {
   static final FcmService _instance = FcmService._internal();
   factory FcmService() => _instance;
   FcmService._internal();
 
   final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
+  final StreamController<String> _tokenChanges = StreamController<String>.broadcast();
   String? _fcmToken;
   OnRouteDeepLink? _onDeepLink;
-  bool _isInitialized = false;
 
   String? get fcmToken => _fcmToken;
 
-  /// Initialize Firebase & FCM notifications
+  /// Emits whenever FCM issues a (new) token, so the web app can re-register it.
+  Stream<String> get tokenChanges => _tokenChanges.stream;
+
+  static const AndroidNotificationChannel _channel = AndroidNotificationChannel(
+    'mashrutgo_operations',
+    'MashrutGo bildirishnomalari',
+    description: 'To‘lovlar, pul yechish va smena xabarlari',
+    importance: Importance.high,
+  );
+
   Future<void> initialize({OnRouteDeepLink? onDeepLink}) async {
     _onDeepLink = onDeepLink;
-
+    if (!AppConfig.fcmConfigured) {
+      debugPrint('[FCM] Not configured (FCM_* dart-defines missing): push notifications disabled');
+      return;
+    }
     try {
-      // 1. Initialize Firebase Core
-      await Firebase.initializeApp();
-
-      // 2. Setup local notifications for Android/iOS foreground display
-      const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-      const iosSettings = DarwinInitializationSettings(
-        requestAlertPermission: true,
-        requestBadgePermission: true,
-        requestSoundPermission: true,
+      await Firebase.initializeApp(
+        options: FirebaseOptions(
+          apiKey: AppConfig.fcmApiKey,
+          appId: AppConfig.fcmAppId,
+          messagingSenderId: AppConfig.fcmSenderId,
+          projectId: AppConfig.fcmProjectId,
+          iosBundleId: AppConfig.fcmIosBundleId.isEmpty ? null : AppConfig.fcmIosBundleId,
+        ),
       );
-      const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
 
       await _localNotifications.initialize(
-        initSettings,
-        onDidReceiveNotificationResponse: (response) {
-          if (response.payload != null && response.payload!.isNotEmpty) {
-            _handleNotificationPayload(response.payload!);
-          }
-        },
+        settings: const InitializationSettings(
+          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+          iOS: DarwinInitializationSettings(),
+        ),
+        onDidReceiveNotificationResponse: (response) => _openRoute(response.payload),
       );
-
-      // 3. Request permissions from user
-      final messaging = FirebaseMessaging.instance;
-      final settings = await messaging.requestPermission(
-        alert: true,
-        announcement: false,
-        badge: true,
-        carPlay: false,
-        criticalAlert: false,
-        provisional: false,
-        sound: true,
-      );
-
-      if (settings.authorizationStatus == AuthorizationStatus.authorized ||
-          settings.authorizationStatus == AuthorizationStatus.provisional) {
-        debugPrint('[FCM] Permission granted');
-
-        // 4. Retrieve FCM token
-        _fcmToken = await messaging.getToken();
-        debugPrint('[FCM] Device Token: $_fcmToken');
-
-        if (_fcmToken != null) {
-          await registerDeviceWithBackend(_fcmToken!);
-        }
-
-        // Listen for token refresh
-        messaging.onTokenRefresh.listen((newToken) {
-          _fcmToken = newToken;
-          registerDeviceWithBackend(newToken);
-        });
-
-        // 5. Handle foreground messages
-        FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-          debugPrint('[FCM] Foreground message: ${message.notification?.title}');
-          _showForegroundNotification(message);
-        });
-
-        // 6. Handle notification click when app opened from background
-        FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-          debugPrint('[FCM] Notification tapped: ${message.data}');
-          final targetRoute = message.data['route'] ?? message.data['deep_link'];
-          if (targetRoute != null && _onDeepLink != null) {
-            _onDeepLink!(targetRoute.toString());
-          }
-        });
-
-        // 7. Check if app was opened from terminated state via notification
-        final initialMessage = await messaging.getInitialMessage();
-        if (initialMessage != null) {
-          final targetRoute = initialMessage.data['route'] ?? initialMessage.data['deep_link'];
-          if (targetRoute != null && _onDeepLink != null) {
-            _onDeepLink!(targetRoute.toString());
-          }
-        }
+      if (Platform.isAndroid) {
+        await _localNotifications
+            .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+            ?.createNotificationChannel(_channel);
       }
 
-      _isInitialized = true;
+      final messaging = FirebaseMessaging.instance;
+      final settings = await messaging.requestPermission(alert: true, badge: true, sound: true);
+      if (settings.authorizationStatus == AuthorizationStatus.denied) {
+        debugPrint('[FCM] Notification permission denied by the user');
+        return;
+      }
+
+      _setToken(await messaging.getToken());
+      messaging.onTokenRefresh.listen(_setToken);
+
+      FirebaseMessaging.onMessage.listen(_showForegroundNotification);
+      FirebaseMessaging.onMessageOpenedApp.listen((message) => _openRoute(_routeOf(message)));
+      final initial = await messaging.getInitialMessage();
+      if (initial != null) _openRoute(_routeOf(initial));
     } catch (e) {
-      debugPrint('[FCM] Warning: Firebase/FCM init skipped or failed (expected in mock dev without google-services.json): $e');
-      // Generate simulated mock token for development testing with Web bridge
-      _fcmToken = 'mock-fcm-token-${DateTime.now().millisecondsSinceEpoch}';
+      // Misconfiguration must not break the app: the in-app notification list still works
+      debugPrint('[FCM] Initialization failed, push disabled: $e');
+      _fcmToken = null;
     }
   }
 
-  /// Register device token with Dev1 Backend endpoint
-  Future<bool> registerDeviceWithBackend(String token, {String? authToken}) async {
-    try {
-      final url = Uri.parse('${AppConfig.apiBaseUrl}/devices/register');
-      final headers = {
-        'Content-Type': 'application/json',
-        if (authToken != null) 'Authorization': 'Bearer $authToken',
-      };
-
-      final body = jsonEncode({
-        'token': token,
-        'platform': !kIsWeb && Platform.isAndroid ? 'android' : 'ios',
-        'app_version': '1.0.0',
-        'registered_at': DateTime.now().toIso8601String(),
-      });
-
-      final res = await http.post(url, headers: headers, body: body).timeout(const Duration(seconds: 10));
-      debugPrint('[FCM] Device registration response: ${res.statusCode}');
-      return res.statusCode >= 200 && res.statusCode < 300;
-    } catch (e) {
-      debugPrint('[FCM] Backend device registration deferred: $e');
-      return false;
-    }
+  void _setToken(String? token) {
+    if (token == null || token.isEmpty || token == _fcmToken) return;
+    _fcmToken = token;
+    _tokenChanges.add(token);
   }
 
-  void _showForegroundNotification(RemoteMessage message) {
+  String? _routeOf(RemoteMessage message) => (message.data['route'] ?? message.data['deep_link'])?.toString();
+
+  void _openRoute(String? raw) {
+    final route = AppConfig.routeFromDeepLink(raw);
+    if (route != null) _onDeepLink?.call(route);
+  }
+
+  Future<void> _showForegroundNotification(RemoteMessage message) async {
     final notification = message.notification;
     if (notification == null) return;
-
-    final targetRoute = message.data['route'] ?? message.data['deep_link'] ?? '';
-
-    _localNotifications.show(
-      notification.hashCode,
-      notification.title ?? 'MashrutGo',
-      notification.body ?? '',
-      const NotificationDetails(
+    await _localNotifications.show(
+      id: message.messageId?.hashCode ?? notification.hashCode,
+      title: notification.title ?? 'MashrutGo',
+      body: notification.body ?? '',
+      notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
-          'mashrutgo_operations',
-          'MashrutGo Bildirishnomalar',
-          importance: Importance.max,
+          _channel.id,
+          _channel.name,
+          channelDescription: _channel.description,
+          importance: Importance.high,
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
         ),
-        iOS: DarwinNotificationDetails(
-          presentAlert: true,
-          presentBadge: true,
-          presentSound: true,
-        ),
+        iOS: const DarwinNotificationDetails(presentAlert: true, presentBadge: true, presentSound: true),
       ),
-      payload: targetRoute.toString(),
+      payload: _routeOf(message),
     );
-  }
-
-  void _handleNotificationPayload(String payload) {
-    if (_onDeepLink != null && payload.isNotEmpty) {
-      _onDeepLink!(payload);
-    }
   }
 }

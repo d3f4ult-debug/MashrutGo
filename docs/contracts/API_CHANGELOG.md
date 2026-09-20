@@ -47,6 +47,32 @@
 
 ## 2. Version History
 
+### [v1.1.0] — Integration hardening (all role UIs on the real API)
+*Date: 2026-09-19* — backwards compatible unless marked **breaking**.
+
+- **Timestamps**: every `DateTime` column now round-trips as timezone-aware UTC (`app/db/types.py::UTCDateTime`). JSON responses always carry an offset (`…Z` / `+00:00`); SQLite previously returned naive strings that browsers read as local time.
+- **Super Admin**
+  - `PUT /admin/uyushmalar/{id}/admin` *(new)* — create the Uyushma admin login or reset its name/phone/password (audited `uyushma.admin_create` / `uyushma.admin_reset`).
+  - `POST /admin/uyushmalar/{id}/archive` also deactivates the tenant's driver profiles and vehicles; `GET /admin/kpis` totals exclude archived tenants.
+  - `GET /admin/clients?status=active|blocked` *(new filter)*.
+  - `POST /admin/wallets/{user_id}/adjust` accepts `Idempotency-Key` (retries return the original entry, a reused key with another amount → 409); only client/driver wallets (422 otherwise); inactive wallet → 409 instead of 500.
+  - `PUT /admin/settings` rejects `min_topup_uzs > max_topup_uzs` (422).
+  - `max_unassigned_vehicles` is enforced: `POST /uyushma/{id}/vehicles` without a driver → 409 when the limit is reached.
+- **Uyushma**
+  - `phone` of `POST /uyushma` / `PUT /admin/uyushmalar/{id}` is validated and normalized to `+998XXXXXXXXX` (**breaking** for invalid numbers).
+  - `GET /uyushma/{id}/finance/summary` accepts `date_to`.
+  - Vehicle `nfc_tag_id` chip UIDs are normalized to upper-case hex without separators; `POST /payments/resolve-vehicle` matches `04:a2:…`, `04A2…` and `04-a2-…` alike.
+- **Routes / Route Editor**
+  - `PUT /routes/{id}/directions/{type}` validates that the geometry starts/ends within 1.5 km of A/B (422), recomputes an implausible `distance_meters` from the line and fills a missing duration; `waypoints` max 100 (same as auto-path). `POST /routes/{id}/directions` validates `polyline` GeoJSON.
+  - Duplicate route number 409 message is now Uzbek.
+- **Driver GPS**
+  - `POST /driver/gps/single` and `POST /driver/gps/batch` responses carry `server_time`; the 422 rejection detail is an object `{message, reason, server_time}`. A driver app whose device clock is wrong corrects it from this value and re-sends, instead of silently losing the shift's GPS.
+  - `POST /driver/gps/batch` accepts an optional `shift_id`: a backlog recorded during an earlier shift (the driver ended it while offline) is stored as **that** shift's history. It is accepted for 12 hours after the shift ended, is scoped to the caller's own shifts (404 otherwise), and never moves a vehicle on the live map. Without `shift_id` the behaviour is unchanged (the active shift, else the most recent one inside the window).
+- **Realtime** (see `REALTIME_EVENTS.md`)
+  - `route.vehicle.status` is broadcast on shift start; `vehicle.location.updated` is re-sent after `POST /driver/shift/direction` (now audited as `shift.direction`) and carries `parking_name`.
+  - `parking.count.updated` is re-broadcast when a vehicle inside a stoyanka turns stale or its shift is force-ended.
+  - `GET /operations/live-fleet` items include `route_name`.
+
 ### [v0.6.0] — Stage 4: Driver Shift, GPS Ingest, Realtime & Parking Geofence
 *Date: 2026-09-19*
 - **Driver Shift Lifecycle**:

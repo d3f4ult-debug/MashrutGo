@@ -1,19 +1,19 @@
-import React from 'react'
-import { render, screen, fireEvent } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
-import HeaderAuthControls from './HeaderAuthControls'
-import { AuthProvider } from '@/services/auth/AuthProvider'
+import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import HeaderAuthControls from './HeaderAuthControls'
+import { AuthProvider } from '@/contexts/AuthContext'
 
 describe('HeaderAuthControls', () => {
-  it('renders sign in link when unauthenticated', () => {
+  beforeEach(() => localStorage.clear())
+
+  it('offers sign-in when there is no session (anonymous use is allowed)', () => {
     render(
       <MemoryRouter>
         <AuthProvider>
           <HeaderAuthControls />
         </AuthProvider>
-      </MemoryRouter>
+      </MemoryRouter>,
     )
-    expect(screen.getByText(/Sign in/i)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Kirish' })).toBeInTheDocument()
   })
 })

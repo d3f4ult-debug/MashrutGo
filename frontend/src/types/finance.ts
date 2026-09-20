@@ -1,95 +1,105 @@
-// ── Finance & Operations Types (Stage 6) ──
+// ── Uyushma finance view models (mapped from backend DTOs in services/api/financeApi.ts) ──
+// Self-contained on purpose: do not import from ./payment (client wallet types).
 
-import type { PaymentMethod, PaymentStatus } from './payment';
+/** Backend `Payment.status` values exposed to the Uyushma. */
+export type FinancePaymentStatus = 'completed' | 'refunded' | 'failed'
 
-export interface UyushmaPaymentTransaction {
-  id: string;
-  reference_id: string;        // e.g. "CLK-904821"
-  uyushma_id: string;
-  route_id: string;
-  route_number: string;
-  vehicle_id: string;
-  vehicle_plate: string;
-  driver_id: string;
-  driver_name: string;
-  amount: number;              // in UZS
-  commission_amount: number;   // platform fee in UZS
-  net_amount: number;          // amount to organization
-  status: PaymentStatus;
-  method: PaymentMethod;
-  created_at: string;
-  refund_reason?: string;
-  refunded_at?: string;
-  passenger_identifier?: string;
+/** How the passenger paid. Only the wallet and Click exist on the backend. */
+export type FinancePaymentMethod = 'wallet' | 'click'
+
+/** How the vehicle was identified when paying (not a payment method). */
+export type IdentificationMethod = 'qr' | 'nfc' | 'manual'
+
+export interface UyushmaPayment {
+  id: string
+  reference: string
+  uyushma_id: string
+  route_id: string
+  route_number: string
+  /** vehicle database id */
+  vehicle_id: string
+  /** internal id printed on the QR sticker */
+  vehicle_internal_id: string
+  vehicle_plate: string | null
+  driver_id: string
+  driver_name: string
+  amount_uzs: number
+  commission_uzs: number
+  net_amount_uzs: number
+  status: FinancePaymentStatus
+  payment_method: FinancePaymentMethod
+  identification_method: IdentificationMethod
+  created_at: string
+  refund_reason: string | null
+  refunded_at: string | null
+  /** pseudonymous passenger label (no PII), e.g. "Mijoz #0007" */
+  passenger_label: string
 }
 
-export type CashoutActionStatus = 'pending' | 'approved' | 'rejected' | 'paid';
+export interface PaymentFilters {
+  routeId?: string
+  status?: FinancePaymentStatus
+  method?: FinancePaymentMethod
+  /** reference, plate, internal id or driver name (max 50 chars on the backend) */
+  search?: string
+  /** ISO timestamp (inclusive) */
+  dateFrom?: string
+  /** ISO timestamp (inclusive) */
+  dateTo?: string
+  page?: number
+  /** 1..200 */
+  size?: number
+}
 
-export interface UyushmaCashoutRequest {
-  id: string;
-  uyushma_id: string;
-  driver_id: string;
-  driver_name: string;
-  driver_phone: string;
-  vehicle_id: string;
-  vehicle_plate: string;
-  amount: number;
-  method: 'card' | 'bank' | 'cash';
-  payout_details: string;       // Card number or cash desk note
-  status: CashoutActionStatus;
-  created_at: string;
-  processed_at?: string;
-  processed_by?: string;
-  rejection_reason?: string;
-  payment_reference?: string;   // receipt or transfer transaction ID
+export interface Paginated<T> {
+  items: T[]
+  total: number
+  page: number
+  size: number
+  pages: number
+}
+
+/** Lifecycle: pending → approved → paid; pending | approved → rejected. */
+export type CashoutStatus = 'pending' | 'approved' | 'rejected' | 'paid'
+
+export type CashoutMethod = 'cash' | 'card' | 'bank'
+
+export interface CashoutRequest {
+  id: string
+  driver_id: string
+  driver_name: string
+  driver_phone: string
+  uyushma_id: string
+  vehicle_id: string | null
+  vehicle_internal_id: string | null
+  vehicle_plate: string | null
+  amount_uzs: number
+  method: CashoutMethod
+  payout_details: string | null
+  status: CashoutStatus
+  created_at: string
+  /** approval / rejection time */
+  processed_at: string | null
+  paid_at: string | null
+  /** full name of the operator who approved/rejected/paid */
+  processed_by: string | null
+  rejection_reason: string | null
+  payment_reference: string | null
 }
 
 export interface FinanceSummary {
-  gross_revenue: number;        // Jami tushum
-  total_refunds: number;        // Qaytarilgan to'lovlar
-  net_revenue: number;          // Sof tushum
-  platform_commission: number;  // Tizim xizmat haqi
-  completed_rides_count: number;// Muvaffaqiyatli qatnovlar
-  refunded_rides_count: number; // Bekor qilingan qatnovlar
-  pending_cashouts_total: number;
-  paid_cashouts_total: number;
+  /** every payment in the period, refunded ones included */
+  gross_revenue: number
+  total_refunds: number
+  platform_commission: number
+  /** gross − refunds − commission */
+  net_revenue: number
+  completed_rides_count: number
+  refunded_rides_count: number
+  /** pending + approved cash-outs (not period-bound) */
+  pending_cashouts_total: number
+  /** paid cash-outs (not period-bound) */
+  paid_cashouts_total: number
 }
 
-// ── Extensible Fare Rule Types ──
-export type ExtensibleFareType = 'fixed' | 'distance' | 'zone' | 'time_based';
-
-export interface FixedFareConfig {
-  base_amount: number;
-}
-
-export interface DistanceFareConfig {
-  base_amount: number;
-  per_km_rate: number;
-  included_km: number;
-}
-
-export interface ZoneFareConfig {
-  base_amount: number;
-  cross_zone_extra: number;
-}
-
-export interface TimeFareConfig {
-  base_amount: number;
-  peak_multiplier: number;
-  peak_start_hour: number;
-  peak_end_hour: number;
-}
-
-export interface ExtensibleFareRule {
-  id: string;
-  uyushma_id: string;
-  name: string;
-  rule_type: ExtensibleFareType;
-  amount: number;               // display/base amount
-  target_route_id?: string;
-  target_route_number?: string;
-  config: FixedFareConfig | DistanceFareConfig | ZoneFareConfig | TimeFareConfig;
-  is_active: boolean;
-  description?: string;
-  created_at: string;
-}
+export type FinancePeriod = 'today' | '7d' | '30d' | 'all'

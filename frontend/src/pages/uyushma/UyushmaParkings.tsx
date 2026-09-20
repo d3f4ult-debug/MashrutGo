@@ -1,16 +1,21 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useState, useEffect, useCallback } from 'react';
+import { useUyushmaScope } from '../../contexts/UyushmaScopeContext';
 import { uyushmaApi } from '../../services/api/uyushmaApi';
+import { errorMessage } from '../../services/api/client';
+import { PointPickerMap } from '../../components/map/PointPickerMap';
 import type { UyushmaParking } from '../../types/uyushma';
 import './UyushmaOperations.css';
 
 export function UyushmaParkings() {
-  const { user } = useAuth();
-  const uyushmaId = user?.uyushma_id || 'uyushma-01';
+  const { uyushmaId: scopedUyushmaId } = useUyushmaScope();
+  const uyushmaId = scopedUyushmaId ?? '';
 
   const [parkings, setParkings] = useState<UyushmaParking[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -25,21 +30,25 @@ export function UyushmaParkings() {
   const [isActive, setIsActive] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const loadParkings = async () => {
+  const loadParkings = useCallback(async () => {
+    if (!uyushmaId) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
+    setLoadError(null);
     try {
-      const data = await uyushmaApi.getParkings(uyushmaId);
-      setParkings(data);
-    } catch {
-      // Fallback
+      setParkings(await uyushmaApi.getParkings(uyushmaId));
+    } catch (err) {
+      setLoadError(errorMessage(err, "Stoyankalarni yuklab bo'lmadi"));
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [uyushmaId]);
 
   useEffect(() => {
-    loadParkings();
-  }, [uyushmaId]);
+    void loadParkings();
+  }, [loadParkings]);
 
   const openCreateModal = () => {
     setEditingParking(null);
@@ -67,11 +76,20 @@ export function UyushmaParkings() {
 
   const handleSaveParking = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) {
-      setFormError("Stoyanka nomi majburiy.");
+    if (name.trim().length < 2) {
+      setFormError("Stoyanka nomi majburiy (kamida 2 belgi).");
+      return;
+    }
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+      setFormError("Joylashuvni xaritadan tanlang yoki to'g'ri koordinata kiriting.");
+      return;
+    }
+    if (!Number.isFinite(radiusM) || radiusM < 10 || radiusM > 1000) {
+      setFormError('Geofence radiusi 10–1000 metr oralig\'ida bo\'lishi kerak.');
       return;
     }
 
+    setSaving(true);
     try {
       if (editingParking) {
         const updated = await uyushmaApi.updateParking(uyushmaId, editingParking.id, {
@@ -96,14 +114,22 @@ export function UyushmaParkings() {
       }
       setIsModalOpen(false);
     } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : 'Xatolik yuz berdi');
+      setFormError(errorMessage(err, 'Xatolik yuz berdi'));
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDeleteParking = async (parkingId: string) => {
-    if (!window.confirm("Haqiqatan ham ushbu stoyankani o'chirmoqchimisiz?")) return;
-    await uyushmaApi.deleteParking(uyushmaId, parkingId);
-    setParkings(prev => prev.filter(p => p.id !== parkingId));
+  /** Stoyankas are deactivated (geofence stops counting), never deleted: history stays intact. */
+  const handleDeactivateParking = async (parking: UyushmaParking) => {
+    if (!window.confirm(`"${parking.name}" stoyankasi faolsizlantirilsinmi? Geofence hisobi to'xtaydi.`)) return;
+    setActionError(null);
+    try {
+      await uyushmaApi.deleteParking(uyushmaId, parking.id);
+      setParkings(prev => prev.map(p => (p.id === parking.id ? { ...p, is_active: false, current_vehicle_count: 0 } : p)));
+    } catch (err) {
+      setActionError(errorMessage(err, "Stoyankani faolsizlantirib bo'lmadi"));
+    }
   };
 
   const filteredParkings = parkings.filter(p => {
@@ -126,7 +152,7 @@ export function UyushmaParkings() {
         </div>
 
         <div className="uyushma-page-header__actions">
-          <button className="btn-secondary-action" onClick={loadParkings}>
+          <button className="btn-secondary-action" onClick={() => void loadParkings()}>
             <i className="ri-refresh-line" />
             Yangilash
           </button>
@@ -144,6 +170,19 @@ export function UyushmaParkings() {
           <strong>Avtomatik geofence hisobi:</strong> Haydovchilar stoyankaga yetib borganida tizim GPS radius orqali avtomobilni avtomatik qayd etadi. Qo'lda belgilash talab qilinmaydi.
         </div>
       </div>
+
+      {!uyushmaId && (
+        <div className="rule-conflict-alert">
+          <i className="ri-building-2-line" />
+          <div>Uyushma tanlanmagan. Yuqoridagi ro'yxatdan Uyushmani tanlang.</div>
+        </div>
+      )}
+      {(loadError || actionError) && (
+        <div className="rule-conflict-alert" role="alert">
+          <i className="ri-error-warning-fill" />
+          <div>{loadError || actionError}</div>
+        </div>
+      )}
 
       {/* Toolbar */}
       <div className="uyushma-toolbar">
@@ -226,13 +265,15 @@ export function UyushmaParkings() {
                       >
                         <i className="ri-edit-line" />
                       </button>
-                      <button
-                        className="btn-table-action danger"
-                        onClick={() => handleDeleteParking(p.id)}
-                        title="O'chirish"
-                      >
-                        <i className="ri-delete-bin-line" />
-                      </button>
+                      {p.is_active && (
+                        <button
+                          className="btn-table-action danger"
+                          onClick={() => void handleDeactivateParking(p)}
+                          title="Faolsizlantirish"
+                        >
+                          <i className="ri-forbid-line" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -277,6 +318,19 @@ export function UyushmaParkings() {
                   />
                 </div>
 
+                <div className="uyushma-form-group">
+                  <label>Joylashuv * <span className="hint">(xaritaga bosing yoki pinni suring)</span></label>
+                  <PointPickerMap
+                    lat={Number.isFinite(lat) ? lat : null}
+                    lng={Number.isFinite(lng) ? lng : null}
+                    radiusMeters={radiusM}
+                    onChange={(la, ln) => {
+                      setLat(la);
+                      setLng(ln);
+                    }}
+                  />
+                </div>
+
                 <div className="form-grid-2">
                   <div className="uyushma-form-group">
                     <label>Kenglik (Latitude) *</label>
@@ -311,7 +365,7 @@ export function UyushmaParkings() {
                       className="uyushma-input"
                       value={radiusM}
                       onChange={e => setRadiusM(parseInt(e.target.value))}
-                      min={30}
+                      min={10}
                       max={1000}
                       required
                     />
@@ -352,9 +406,9 @@ export function UyushmaParkings() {
                 >
                   Bekor qilish
                 </button>
-                <button type="submit" className="btn-primary-action">
-                  <i className="ri-save-line" />
-                  Saqlash
+                <button type="submit" className="btn-primary-action" disabled={saving}>
+                  <i className={saving ? 'ri-loader-4-line' : 'ri-save-line'} />
+                  {saving ? 'Saqlanmoqda…' : 'Saqlash'}
                 </button>
               </div>
             </form>

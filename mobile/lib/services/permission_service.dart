@@ -2,45 +2,29 @@ import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class PermissionService {
-  /// Request GPS Location permission for driver shifts and live map tracking
+  /// Location permission for the driver's shift GPS and the passenger's "current location".
   static Future<bool> requestLocationPermission() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      return false;
-    }
-
-    LocationPermission permission = await Geolocator.checkPermission();
+    if (!await Geolocator.isLocationServiceEnabled()) return false;
+    var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        return false;
-      }
     }
-
-    if (permission == LocationPermission.deniedForever) {
-      return false;
-    }
-
-    return true;
+    return permission == LocationPermission.always || permission == LocationPermission.whileInUse;
   }
 
-  /// Request camera permission for Fare QR scanner
+  /// Camera permission for the fare QR scanner (getUserMedia inside the WebView).
   static Future<bool> requestCameraPermission() async {
     final status = await Permission.camera.request();
     return status.isGranted;
   }
 
-  /// Get accurate native device coordinates to bridge to PWA
+  /// One high-accuracy fix for the web app (fallback when WebView geolocation is unavailable).
   static Future<Map<String, dynamic>?> getCurrentLocation() async {
-    final hasPermission = await requestLocationPermission();
-    if (!hasPermission) return null;
-
+    if (!await requestLocationPermission()) return null;
     try {
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10),
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 15)),
       );
-
       return {
         'latitude': position.latitude,
         'longitude': position.longitude,

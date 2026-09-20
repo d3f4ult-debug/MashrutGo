@@ -1,51 +1,42 @@
-import React from 'react'
 import { render, screen } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
 import ItineraryLegs from './ItineraryLegs'
-import { Itinerary } from '@/types/client'
+import { makeItinerary, makeLeg } from '@/tests/fixtures'
 
-describe('ItineraryLegs component', () => {
-  it('renders step-by-step legs with walking, boarding and alighting stops', () => {
-    const mockItinerary: Itinerary = {
-      id: 'itn-test',
-      title: 'Marshrut 15 test',
-      mode: 'fastest',
-      totalDurationMinutes: 20,
-      totalFareSoM: 2000,
-      totalWalkingMeters: 300,
-      transferCount: 0,
-      routeNumbers: ['15'],
-      liveVehiclesCount: 3,
-      departureTime: '12:00',
-      arrivalTime: '12:20',
+describe('ItineraryLegs', () => {
+  it('renders walking and transit steps with boarding and alighting stops', () => {
+    const itinerary = makeItinerary({
+      title: 'Marshrut 15',
       legs: [
-        {
-          id: 'l1',
-          type: 'walking',
-          instruction: 'Bekatgacha piyoda boring',
-          distanceMeters: 200,
-          durationMinutes: 3
-        },
-        {
-          id: 'l2',
+        makeLeg({ instruction: 'Bekatgacha piyoda boring' }),
+        makeLeg({
+          id: 'leg-1',
           type: 'transit',
           routeNumber: '15',
-          instruction: '15-sonli marshrutga chiqing',
+          instruction: '15-yo‘nalishga chiqing',
           distanceMeters: 2500,
           durationMinutes: 15,
           intermediateStopsCount: 3,
-          fareSoM: 2000,
-          fromStop: { id: 's1', name: 'Registon bekati', coordinates: [72.34, 40.78] },
-          toStop: { id: 's2', name: 'Bozor bekati', coordinates: [72.36, 40.77] }
-        }
-      ]
-    }
+          fareSoM: 2500,
+          fareKnown: true,
+          fromStop: { id: 's1', name: 'Bobur maydoni', coordinates: [72.34, 40.78] },
+          toStop: { id: 's2', name: 'Yangi bozor', coordinates: [72.36, 40.77] },
+        }),
+      ],
+    })
 
-    render(<ItineraryLegs itinerary={mockItinerary} />)
-    expect(screen.getByText('Marshrut 15 test')).toBeTruthy()
-    expect(screen.getByText('Bekatgacha piyoda boring')).toBeTruthy()
-    expect(screen.getByText('15-sonli marshrutga chiqing')).toBeTruthy()
-    expect(screen.getByText(/Registon bekati/i)).toBeTruthy()
-    expect(screen.getByText(/Bozor bekati/i)).toBeTruthy()
+    render(<ItineraryLegs itinerary={itinerary} />)
+    expect(screen.getByText('Marshrut 15')).toBeInTheDocument()
+    expect(screen.getByText('Bekatgacha piyoda boring')).toBeInTheDocument()
+    expect(screen.getByText('15-yo‘nalishga chiqing')).toBeInTheDocument()
+    expect(screen.getByText('Bobur maydoni')).toBeInTheDocument()
+    expect(screen.getByText('Yangi bozor')).toBeInTheDocument()
+  })
+
+  it('marks a transit leg without visible vehicles neutrally', () => {
+    const itinerary = makeItinerary({
+      legs: [makeLeg({ id: 'leg-t', type: 'transit', routeNumber: '7', instruction: '7 ga chiqing', liveStatus: 'no_online_vehicle_visible' })],
+    })
+    render(<ItineraryLegs itinerary={itinerary} />)
+    expect(screen.getByText(/Hozir online transport ko‘rinmayapti/i)).toBeInTheDocument()
   })
 })

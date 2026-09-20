@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.db.base import Base
+from app.db.types import UTCDateTime
 
 
 class DriverShift(Base):
@@ -12,13 +13,14 @@ class DriverShift(Base):
     vehicle_id = Column(Integer, ForeignKey("vehicles.id", ondelete="CASCADE"), nullable=False, index=True)
     route_id = Column(Integer, ForeignKey("routes.id", ondelete="CASCADE"), nullable=False, index=True)
     direction = Column(String(20), default="outbound", nullable=False)
-    status = Column(String(20), default="active", nullable=False, index=True)  # active, completed, cancelled
-    started_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    ended_at = Column(DateTime(timezone=True), nullable=True)
-    last_gps_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    status = Column(String(20), default="active", nullable=False, index=True)  # active, completed, force_ended
+    end_reason = Column(String(255), nullable=True)
+    started_at = Column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False)
+    ended_at = Column(UTCDateTime(), nullable=True)
+    last_gps_at = Column(UTCDateTime(), nullable=True)
+    created_at = Column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
@@ -42,10 +44,16 @@ class LocationSnapshot(Base):
     speed_kmh = Column(Float, default=0.0, nullable=False)
     heading = Column(Float, default=0.0, nullable=False)
     accuracy_meters = Column(Float, default=0.0, nullable=False)
-    captured_at = Column(DateTime(timezone=True), nullable=False, index=True)
-    received_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    idempotency_key = Column(String(64), unique=True, index=True, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    captured_at = Column(UTCDateTime(), nullable=False, index=True)
+    received_at = Column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False)
+    # Unique per vehicle, not globally: one driver's client-generated key must never be able to
+    # suppress another driver's GPS point.
+    idempotency_key = Column(String(64), index=True, nullable=True)
+    created_at = Column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("vehicle_id", "idempotency_key", name="uq_snapshot_vehicle_idempotency"),
+    )
 
     vehicle = relationship("Vehicle", back_populates="location_snapshots")
     shift = relationship("DriverShift", back_populates="snapshots")
@@ -61,11 +69,12 @@ class ClientRouteWatch(Base):
     direction = Column(String(20), default="outbound", nullable=False)
     lat = Column(Float, nullable=False)
     lng = Column(Float, nullable=False)
+    accuracy_meters = Column(Float, nullable=True)
     status = Column(String(20), default="active", nullable=False, index=True)  # active, on_car, stopped, expired
-    started_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    last_heartbeat_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    started_at = Column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False)
+    last_heartbeat_at = Column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False)
+    expires_at = Column(UTCDateTime(), nullable=False)
+    created_at = Column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 class ClientRideState(Base):
@@ -77,6 +86,6 @@ class ClientRideState(Base):
     route_id = Column(Integer, ForeignKey("routes.id", ondelete="SET NULL"), nullable=True)
     vehicle_id = Column(Integer, ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True)
     state = Column(String(20), default="waiting", nullable=False, index=True)  # waiting, on_car, exited
-    boarded_at = Column(DateTime(timezone=True), nullable=True)
-    exited_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    boarded_at = Column(UTCDateTime(), nullable=True)
+    exited_at = Column(UTCDateTime(), nullable=True)
+    created_at = Column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False)

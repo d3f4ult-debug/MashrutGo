@@ -1,11 +1,8 @@
 import json
-import uuid
 from typing import Any, Dict, List, Optional, Tuple
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from app.models.finance import FareRule
-from app.models.shift import DriverShift
-from app.models.transport import Route, RouteDirection, RouteWaypoint
+from app.models.transport import Route, RouteDirection
 from app.schemas.routing import (
     CoordinateInput,
     Itinerary,
@@ -14,10 +11,16 @@ from app.schemas.routing import (
     RouteSearchResponse,
 )
 from app.services.routing.maptiler_adapter import haversine_distance
-from app.services.routing.eta_service import eta_service
+from app.services.fare_engine import quote_fare
+from app.services.realtime.tracking_service import tracking_service
+from app.services.routing.eta_service import (
+    eta_service,
+    extract_direction_polyline_coordinates,
+    project_point_onto_polyline,
+)
 
 WALKING_SPEED_M_PER_MIN = 75.0  # ~4.5 km/h
-TRANSIT_SPEED_M_PER_MIN = 500.0  # ~30 km/h
+TRANSIT_SPEED_M_PER_MIN = 400.0  # ~24 km/h urban average incl. stops
 ROAD_CURVATURE_FACTOR = 1.25
 
 
@@ -46,32 +49,28 @@ class GraphRouter:
         walking_itinerary = cls._build_direct_walking_itinerary(origin, destination)
         candidates: List[Itinerary] = [walking_itinerary]
 
-        # 2. Query all published routes with directions, waypoints, fare rules, and active shifts
-        routes = db.query(Route).filter(Route.is_published.is_(True)).all()
+        # 2. Published routes with directions, waypoints, fare quotes and live vehicle status
+        # Eager-load directions and their waypoints: lazy loading here is ~14 queries per route
+        routes = (
+            db.query(Route)
+            .options(selectinload(Route.directions).selectinload(RouteDirection.waypoints))
+            .filter(Route.is_published.is_(True), Route.is_archived.is_(False))
+            .all()
+        )
+        fare_cache: Dict[Tuple[int, int], object] = {}
 
         route_directions_data = []
         for route in routes:
-            # Determine Fare for this route
-            fare_rule = (
-                db.query(FareRule)
-                .filter(FareRule.route_id == route.id, FareRule.is_active.is_(True))
-                .first()
-            )
-            if not fare_rule:
-                fare_rule = (
-                    db.query(FareRule)
-                    .filter(FareRule.uyushma_id == route.uyushma_id, FareRule.is_active.is_(True))
-                    .first()
-                )
-            base_fare = fare_rule.base_fare_uzs if fare_rule else 2500
+            # Fare from the Uyushma's tariff engine; unknown fares are flagged, never invented
+            cache_key = (route.uyushma_id, route.id)
+            if cache_key not in fare_cache:
+                fare_cache[cache_key] = quote_fare(db, route.uyushma_id, route.id)
+            quote = fare_cache[cache_key]
+            base_fare = quote.amount_uzs if quote else 0
 
-            # Check if any driver shift is active for this route
-            active_shift = (
-                db.query(DriverShift)
-                .filter(DriverShift.route_id == route.id, DriverShift.status == "active")
-                .first()
-            )
-            has_live = active_shift is not None
+            online_count = tracking_service.online_count(route.id)
+            has_live = online_count > 0
+            # Without live data we cannot know the wait: use a conservative planning buffer
             wait_time_mins = 5 if has_live else 10
             live_status = "online_vehicles_visible" if has_live else "no_online_vehicle_visible"
             confidence = 0.95 if has_live else 0.50
@@ -84,7 +83,9 @@ class GraphRouter:
                         "direction": direction,
                         "stops": stops,
                         "fare_uzs": base_fare,
+                        "fare_known": quote is not None,
                         "has_live": has_live,
+                        "online_count": online_count,
                         "wait_time_mins": wait_time_mins,
                         "live_status": live_status,
                         "confidence": confidence,
@@ -126,6 +127,50 @@ class GraphRouter:
         )
         return stops
 
+    @staticmethod
+    def _transit_speed(direction: RouteDirection) -> float:
+        """Metres per minute: the direction's own average (from the routing provider) or ~24 km/h."""
+        if direction.distance_meters and direction.duration_seconds:
+            speed = direction.distance_meters / (direction.duration_seconds / 60.0)
+            if 150.0 <= speed <= 1000.0:
+                return speed
+        return TRANSIT_SPEED_M_PER_MIN
+
+    @staticmethod
+    def _transit_segment(
+        direction: RouteDirection,
+        stops: List["StopPoint"],
+        board_idx: int,
+        alight_idx: int,
+    ) -> Tuple[List[List[float]], int]:
+        """
+        Coordinates ([lng, lat]) and length of the ride between two stops, cut out of the
+        direction's road geometry. Falls back to the stop chain when no geometry is stored.
+        """
+        polyline = extract_direction_polyline_coordinates(direction)
+        board, alight = stops[board_idx], stops[alight_idx]
+        if len(polyline) >= 2:
+            start_along, _, s_lat, s_lng = project_point_onto_polyline(board.lat, board.lng, polyline)
+            end_along, _, e_lat, e_lng = project_point_onto_polyline(alight.lat, alight.lng, polyline)
+            if end_along > start_along:
+                coords: List[List[float]] = [[s_lng, s_lat]]
+                travelled = 0.0
+                for k in range(1, len(polyline)):
+                    seg = haversine_distance(polyline[k - 1][0], polyline[k - 1][1], polyline[k][0], polyline[k][1])
+                    travelled += seg
+                    if start_along < travelled < end_along:
+                        coords.append([polyline[k][1], polyline[k][0]])
+                coords.append([e_lng, e_lat])
+                return coords, int(round(end_along - start_along))
+
+        coords = []
+        dist = 0.0
+        for idx in range(board_idx, alight_idx + 1):
+            coords.append([stops[idx].lng, stops[idx].lat])
+            if idx > board_idx:
+                dist += haversine_distance(stops[idx - 1].lat, stops[idx - 1].lng, stops[idx].lat, stops[idx].lng) * ROAD_CURVATURE_FACTOR
+        return coords, int(round(dist))
+
     @classmethod
     def _build_direct_walking_itinerary(
         cls,
@@ -149,11 +194,11 @@ class GraphRouter:
                 "type": "LineString",
                 "coordinates": [[origin.lng, origin.lat], [destination.lng, destination.lat]],
             }),
-            live_status="online_vehicles_visible",
+            live_status=None,
         )
 
         return Itinerary(
-            id=f"itin_walk_{uuid.uuid4().hex[:8]}",
+            id="itin_walk",
             mode_classification="cheapest",
             mode_tags=["cheapest", "least_transfers"],
             total_duration_minutes=duration_mins,
@@ -164,7 +209,7 @@ class GraphRouter:
             wait_duration_minutes=0,
             transfers_count=0,
             total_fare_uzs=0,
-            live_status="online_vehicles_visible",
+            live_status="not_applicable",
             live_confidence=1.0,
             legs=[leg],
         )
@@ -209,18 +254,9 @@ class GraphRouter:
                     if total_walk_m < direct_walk_dist * 1.5 and total_walk_m < best_walking:
                         best_walking = total_walk_m
 
-                        # Calculate transit segment distance & duration
-                        transit_dist_m = 0
-                        transit_coords = []
-                        for s_idx in range(i, j + 1):
-                            transit_coords.append([stops[s_idx].lng, stops[s_idx].lat])
-                            if s_idx > i:
-                                transit_dist_m += int(round(haversine_distance(
-                                    stops[s_idx - 1].lat, stops[s_idx - 1].lng,
-                                    stops[s_idx].lat, stops[s_idx].lng,
-                                ) * ROAD_CURVATURE_FACTOR))
-
-                        transit_duration_mins = max(2, int(round(transit_dist_m / TRANSIT_SPEED_M_PER_MIN)))
+                        # Transit segment follows the stored road geometry of the direction
+                        transit_coords, transit_dist_m = cls._transit_segment(direction, stops, i, j)
+                        transit_duration_mins = max(2, int(round(transit_dist_m / cls._transit_speed(direction))))
                         walk_to_board_mins = int(round(walk_to_board_m / WALKING_SPEED_M_PER_MIN))
                         walk_from_alight_mins = int(round(walk_from_alight_m / WALKING_SPEED_M_PER_MIN))
 
@@ -232,6 +268,7 @@ class GraphRouter:
                             stop_lng=board_stop.lng,
                             db=db,
                             stop_name=board_stop.name,
+                            direction=direction,
                         )
                         if eta.has_approaching_vehicle:
                             actual_wait_mins = max(1, eta.eta_minutes or 1)
@@ -258,7 +295,7 @@ class GraphRouter:
                                     "type": "LineString",
                                     "coordinates": [[origin.lng, origin.lat], [board_stop.lng, board_stop.lat]],
                                 }),
-                                live_status="online_vehicles_visible",
+                                live_status=None,
                             ),
                             ItineraryLeg(
                                 leg_type="transit",
@@ -273,6 +310,7 @@ class GraphRouter:
                                 distance_meters=transit_dist_m,
                                 duration_minutes=transit_duration_mins,
                                 fare_uzs=fare_uzs,
+                                fare_known=item["fare_known"],
                                 stops_count=j - i,
                                 polyline=json.dumps({"type": "LineString", "coordinates": transit_coords}),
                                 live_status=actual_live_status,
@@ -290,12 +328,12 @@ class GraphRouter:
                                     "type": "LineString",
                                     "coordinates": [[alight_stop.lng, alight_stop.lat], [destination.lng, destination.lat]],
                                 }),
-                                live_status="online_vehicles_visible",
+                                live_status=None,
                             ),
                         ]
 
                         best_candidate = Itinerary(
-                            id=f"itin_direct_{route.route_number}_{uuid.uuid4().hex[:6]}",
+                            id=f"itin_direct_{route.id}_{direction.direction_type}_{i}_{j}",
                             mode_classification="fastest",
                             mode_tags=["least_transfers"],
                             total_duration_minutes=total_duration_mins,
@@ -306,6 +344,8 @@ class GraphRouter:
                             wait_duration_minutes=actual_wait_mins,
                             transfers_count=0,
                             total_fare_uzs=fare_uzs,
+                            fare_known=item["fare_known"],
+                            online_vehicles_count=item["online_count"],
                             live_status=actual_live_status,
                             live_confidence=actual_confidence,
                             legs=legs,
@@ -370,11 +410,11 @@ class GraphRouter:
                         # Allow transfer walk up to 1000 meters
                         if transfer_walk_m <= 1000:
                             # Calculate transit distances
-                            r1_dist_m = int(round(haversine_distance(r1_board_stop.lat, r1_board_stop.lng, r1_transfer_stop.lat, r1_transfer_stop.lng) * ROAD_CURVATURE_FACTOR))
-                            r2_dist_m = int(round(haversine_distance(r2_transfer_stop.lat, r2_transfer_stop.lng, r2_alight_stop.lat, r2_alight_stop.lng) * ROAD_CURVATURE_FACTOR))
+                            r1_coords, r1_dist_m = cls._transit_segment(r1_data["direction"], r1_stops, best_r1_board_idx, r1_alight_idx)
+                            r2_coords, r2_dist_m = cls._transit_segment(r2_data["direction"], r2_stops, r2_board_idx, best_r2_alight_idx)
 
-                            r1_transit_mins = max(2, int(round(r1_dist_m / TRANSIT_SPEED_M_PER_MIN)))
-                            r2_transit_mins = max(2, int(round(r2_dist_m / TRANSIT_SPEED_M_PER_MIN)))
+                            r1_transit_mins = max(2, int(round(r1_dist_m / cls._transit_speed(r1_data["direction"]))))
+                            r2_transit_mins = max(2, int(round(r2_dist_m / cls._transit_speed(r2_data["direction"]))))
                             transfer_walk_mins = int(round(transfer_walk_m / WALKING_SPEED_M_PER_MIN))
                             walk_to_r1_mins = int(round(walk_to_r1_m / WALKING_SPEED_M_PER_MIN))
                             walk_from_r2_mins = int(round(walk_from_r2_m / WALKING_SPEED_M_PER_MIN))
@@ -387,6 +427,7 @@ class GraphRouter:
                                 stop_lng=r1_board_stop.lng,
                                 db=db,
                                 stop_name=r1_board_stop.name,
+                                direction=r1_data["direction"],
                             )
                             if eta1.has_approaching_vehicle:
                                 actual_r1_wait = max(1, eta1.eta_minutes or 1)
@@ -419,8 +460,8 @@ class GraphRouter:
                                     distance_meters=walk_to_r1_m,
                                     duration_minutes=walk_to_r1_mins,
                                     fare_uzs=0,
-                                    live_status="online_vehicles_visible",
-                                 ),
+                                    live_status=None,
+                                ),
                                 ItineraryLeg(
                                     leg_type="transit",
                                     route_id=r1.id,
@@ -434,7 +475,9 @@ class GraphRouter:
                                     distance_meters=r1_dist_m,
                                     duration_minutes=r1_transit_mins,
                                     fare_uzs=r1_data["fare_uzs"],
+                                    fare_known=r1_data["fare_known"],
                                     stops_count=r1_alight_idx - best_r1_board_idx,
+                                    polyline=json.dumps({"type": "LineString", "coordinates": r1_coords}),
                                     live_status=r1_live_status,
                                 ),
                                 ItineraryLeg(
@@ -446,7 +489,7 @@ class GraphRouter:
                                     distance_meters=transfer_walk_m,
                                     duration_minutes=transfer_walk_mins,
                                     fare_uzs=0,
-                                    live_status="online_vehicles_visible",
+                                    live_status=None,
                                 ),
                                 ItineraryLeg(
                                     leg_type="transit",
@@ -461,7 +504,9 @@ class GraphRouter:
                                     distance_meters=r2_dist_m,
                                     duration_minutes=r2_transit_mins,
                                     fare_uzs=r2_data["fare_uzs"],
+                                    fare_known=r2_data["fare_known"],
                                     stops_count=best_r2_alight_idx - r2_board_idx,
+                                    polyline=json.dumps({"type": "LineString", "coordinates": r2_coords}),
                                     live_status=r2_data["live_status"],
                                 ),
                                 ItineraryLeg(
@@ -473,12 +518,12 @@ class GraphRouter:
                                     distance_meters=walk_from_r2_m,
                                     duration_minutes=walk_from_r2_mins,
                                     fare_uzs=0,
-                                    live_status="online_vehicles_visible",
+                                    live_status=None,
                                 ),
                             ]
 
                             itin = Itinerary(
-                                id=f"itin_xfer_{r1.route_number}_{r2.route_number}_{uuid.uuid4().hex[:6]}",
+                                id=f"itin_xfer_{r1.id}{r1_data['direction'].direction_type[0]}_{r2.id}{r2_data['direction'].direction_type[0]}_{best_r1_board_idx}_{r1_alight_idx}_{r2_board_idx}_{best_r2_alight_idx}",
                                 mode_classification="balanced",
                                 mode_tags=["transfer"],
                                 total_duration_minutes=total_duration_mins,
@@ -489,6 +534,8 @@ class GraphRouter:
                                 wait_duration_minutes=total_wait_mins,
                                 transfers_count=1,
                                 total_fare_uzs=r1_data["fare_uzs"] + r2_data["fare_uzs"],
+                                fare_known=r1_data["fare_known"] and r2_data["fare_known"],
+                                online_vehicles_count=min(r1_data["online_count"], r2_data["online_count"]),
                                 live_status=overall_live_status,
                                 live_confidence=overall_confidence,
                                 legs=legs,

@@ -1,185 +1,163 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
-import { uyushmaApi } from '../../services/api/uyushmaApi';
-import type { UyushmaRoute, RouteDirectionConfig } from '../../types/uyushma';
-import './UyushmaOperations.css';
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useUyushmaScope } from '../../contexts/UyushmaScopeContext'
+import { usePortalBase } from '../../hooks/usePortalBase'
+import { errorMessage } from '../../services/api/client'
+import { uyushmaApi } from '../../services/api/uyushmaApi'
+import { routeEditorApi } from '../../services/api/routeEditorApi'
+import type { RouteDirectionConfig, UyushmaRoute } from '../../types/uyushma'
+import './UyushmaOperations.css'
+
+const DIRECTION_TITLES: Record<RouteDirectionConfig['direction'], string> = {
+  outbound: 'Borish (A → B)',
+  inbound: 'Qaytish (B → A)',
+}
+
+function directionState(r: UyushmaRoute): { drawn: number; label: string } {
+  const drawn = r.directions.filter((d) => d.is_active).length
+  if (drawn === 2) return { drawn, label: 'A ⇄ B chizilgan' }
+  if (r.directions.length === 0) return { drawn, label: 'Chizilmagan' }
+  return { drawn, label: `${drawn}/2 chizilgan` }
+}
 
 export function UyushmaRoutes() {
-  const navigate = useNavigate();
-  const { user } = useAuth();
-  const uyushmaId = user?.uyushma_id || 'uyushma-01';
+  const navigate = useNavigate()
+  const base = usePortalBase()
+  const { uyushmaId, canSwitch, loading: scopeLoading } = useUyushmaScope()
 
-  const [routes, setRoutes] = useState<UyushmaRoute[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [routes, setRoutes] = useState<UyushmaRoute[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [selectedRoute, setSelectedRoute] = useState<UyushmaRoute | null>(null)
 
-  // Modal states
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingRoute, setEditingRoute] = useState<UyushmaRoute | null>(null);
-  const [selectedRouteDirections, setSelectedRouteDirections] = useState<UyushmaRoute | null>(null);
+  const editorPath = (routeId?: string) => (routeId ? `${base}/routes/editor/${routeId}` : `${base}/routes/editor`)
 
-  // Form fields
-  const [routeNumber, setRouteNumber] = useState('');
-  const [routeName, setRouteName] = useState('');
-  const [description, setDescription] = useState('');
-  const [isActive, setIsActive] = useState(true);
-  const [outboundStart, setOutboundStart] = useState('Bosh bekat (A)');
-  const [outboundEnd, setOutboundEnd] = useState('Oxirgi bekat (B)');
-  const [inboundStart, setInboundStart] = useState('Oxirgi bekat (B)');
-  const [inboundEnd, setInboundEnd] = useState('Bosh bekat (A)');
-
-  const [formError, setFormError] = useState<string | null>(null);
-
-  const loadRoutes = async () => {
-    setIsLoading(true);
-    try {
-      const data = await uyushmaApi.getRoutes(uyushmaId);
-      setRoutes(data);
-    } catch {
-      // Fallback in API client
-    } finally {
-      setIsLoading(false);
+  const loadRoutes = useCallback(async () => {
+    if (!uyushmaId) {
+      setRoutes([])
+      setIsLoading(false)
+      return
     }
-  };
+    setIsLoading(true)
+    setLoadError(null)
+    try {
+      setRoutes(await uyushmaApi.getRoutes(uyushmaId))
+    } catch (err) {
+      setLoadError(errorMessage(err, "Yo'nalishlar yuklanmadi"))
+    } finally {
+      setIsLoading(false)
+    }
+  }, [uyushmaId])
 
   useEffect(() => {
-    loadRoutes();
-  }, [uyushmaId]);
+    loadRoutes()
+  }, [loadRoutes])
 
-  const openCreateModal = () => {
-    setEditingRoute(null);
-    setRouteNumber('');
-    setRouteName('');
-    setDescription('');
-    setIsActive(true);
-    setOutboundStart('Bosh bekat (A)');
-    setOutboundEnd('Oxirgi bekat (B)');
-    setInboundStart('Oxirgi bekat (B)');
-    setInboundEnd('Bosh bekat (A)');
-    setFormError(null);
-    setIsModalOpen(true);
-  };
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
 
-  const openEditModal = (r: UyushmaRoute) => {
-    setEditingRoute(r);
-    setRouteNumber(r.route_number);
-    setRouteName(r.route_name);
-    setDescription(r.description || '');
-    setIsActive(r.is_active);
-
-    const outDir = r.directions.find(d => d.direction === 'outbound');
-    const inDir = r.directions.find(d => d.direction === 'inbound');
-
-    setOutboundStart(outDir?.start_name || 'Bosh bekat (A)');
-    setOutboundEnd(outDir?.end_name || 'Oxirgi bekat (B)');
-    setInboundStart(inDir?.start_name || 'Oxirgi bekat (B)');
-    setInboundEnd(inDir?.end_name || 'Bosh bekat (A)');
-
-    setFormError(null);
-    setIsModalOpen(true);
-  };
-
-  const handleSaveRoute = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!routeNumber.trim() || !routeName.trim()) {
-      setFormError("Yo'nalish raqami va nomi majburiy.");
-      return;
-    }
-
-    const directions: RouteDirectionConfig[] = [
-      {
-        id: editingRoute?.directions?.[0]?.id || `dir-${Date.now()}-out`,
-        direction: 'outbound',
-        start_name: outboundStart,
-        end_name: outboundEnd,
-        stops_count: editingRoute?.directions?.[0]?.stops_count || 12,
-        distance_km: editingRoute?.directions?.[0]?.distance_km || 10.5,
-        estimated_duration_min: editingRoute?.directions?.[0]?.estimated_duration_min || 25,
-        is_active: true,
-      },
-      {
-        id: editingRoute?.directions?.[1]?.id || `dir-${Date.now()}-in`,
-        direction: 'inbound',
-        start_name: inboundStart,
-        end_name: inboundEnd,
-        stops_count: editingRoute?.directions?.[1]?.stops_count || 12,
-        distance_km: editingRoute?.directions?.[1]?.distance_km || 10.5,
-        estimated_duration_min: editingRoute?.directions?.[1]?.estimated_duration_min || 25,
-        is_active: true,
-      },
-    ];
-
+  const handleTogglePublish = async (r: UyushmaRoute) => {
+    const next = !r.is_active
+    if (!next && !window.confirm(`№ ${r.route_number} yo'lovchilardan yashiriladi (qoralamaga o'tadi). Davom etasizmi?`)) return
+    setBusyId(r.id)
+    setActionError(null)
     try {
-      if (editingRoute) {
-        const updated = await uyushmaApi.updateRoute(uyushmaId, editingRoute.id, {
-          route_number: routeNumber,
-          route_name: routeName,
-          description,
-          is_active: isActive,
-          directions,
-        });
-        setRoutes(prev => prev.map(r => (r.id === updated.id ? updated : r)));
-      } else {
-        const created = await uyushmaApi.createRoute(uyushmaId, {
-          route_number: routeNumber,
-          route_name: routeName,
-          description,
-          is_active: isActive,
-          directions,
-        });
-        setRoutes(prev => [created, ...prev]);
-      }
-      setIsModalOpen(false);
-    } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : 'Xatolik yuz berdi');
+      const res = await routeEditorApi.setPublished(Number(r.id), next)
+      setRoutes((prev) => prev.map((x) => (x.id === r.id ? { ...x, is_active: res.is_published } : x)))
+      setNotice(res.is_published ? `№ ${r.route_number} chop etildi` : `№ ${r.route_number} yashirildi`)
+    } catch (err) {
+      setActionError(`№ ${r.route_number} ${next ? 'chop etilmadi' : 'yashirilmadi'}: ${errorMessage(err)}`)
+    } finally {
+      setBusyId(null)
     }
-  };
+  }
 
-  const handleDeleteRoute = async (routeId: string) => {
-    if (!window.confirm("Haqiqatan ham ushbu yo'nalishni o'chirmoqchimisiz?")) return;
-    await uyushmaApi.deleteRoute(uyushmaId, routeId);
-    setRoutes(prev => prev.filter(r => r.id !== routeId));
-  };
+  const handleArchiveRoute = async (r: UyushmaRoute) => {
+    if (
+      !window.confirm(
+        `№ ${r.route_number} arxivlansinmi? Yo'nalish yo'lovchilardan yashiriladi va transportlar undan ajratiladi (tarix saqlanadi).`,
+      )
+    ) {
+      return
+    }
+    setBusyId(r.id)
+    setActionError(null)
+    try {
+      await uyushmaApi.deleteRoute(uyushmaId ?? '', r.id)
+      setRoutes((prev) => prev.filter((x) => x.id !== r.id))
+      setNotice(`№ ${r.route_number} arxivlandi`)
+    } catch (err) {
+      setActionError(`№ ${r.route_number} arxivlanmadi: ${errorMessage(err)}`)
+    } finally {
+      setBusyId(null)
+    }
+  }
 
-  const filteredRoutes = routes.filter(r => {
-    const q = searchQuery.toLowerCase();
-    return (
+  const q = searchQuery.trim().toLowerCase()
+  const filteredRoutes = routes.filter(
+    (r) =>
+      !q ||
       r.route_number.toLowerCase().includes(q) ||
       r.route_name.toLowerCase().includes(q) ||
-      (r.description && r.description.toLowerCase().includes(q))
-    );
-  });
+      (r.description ?? '').toLowerCase().includes(q),
+  )
+
+  const scopeMissing = canSwitch && !uyushmaId
 
   return (
     <div className="uyushma-page-container">
-      {/* Header */}
       <div className="uyushma-page-header">
         <div className="uyushma-page-header__left">
           <h1>
             <i className="ri-route-line" style={{ color: 'var(--accent-primary)' }} />
             Yo'nalishlar boshqaruvi
           </h1>
-          <p>Tashkilot tasarrufidagi barcha jamoat transporti yo'nalishlari va ularning yo'nalish qismlari (directions)</p>
+          <p>Yo'nalishlar, ularning Borish (A → B) va Qaytish (B → A) yo'llari hamda chop etish holati</p>
         </div>
 
         <div className="uyushma-page-header__actions">
-          <button className="btn-secondary-action" onClick={() => navigate('/uyushma/routes/editor')}>
-            <i className="ri-map-2-line" style={{ color: 'var(--accent-primary)' }} />
-            Visual Editor
-          </button>
-          <button className="btn-secondary-action" onClick={loadRoutes}>
+          <button className="btn-secondary-action" onClick={loadRoutes} disabled={isLoading || !uyushmaId}>
             <i className="ri-refresh-line" />
             Yangilash
           </button>
-          <button className="btn-primary-action" onClick={openCreateModal}>
+          <button className="btn-primary-action" onClick={() => navigate(editorPath())} disabled={scopeMissing}>
             <i className="ri-add-line" />
             Yangi yo'nalish
           </button>
         </div>
       </div>
 
-      {/* Toolbar */}
+      {scopeMissing && (
+        <div className="rule-guard-banner" style={{ marginBottom: '1rem' }}>
+          <i className="ri-building-2-line" />
+          <div>{scopeLoading ? 'Uyushmalar yuklanmoqda…' : "Uyushma tanlang: yo'nalishlar tanlangan uyushma bo'yicha ko'rsatiladi."}</div>
+        </div>
+      )}
+
+      {actionError && (
+        <div className="rule-conflict-alert" style={{ marginBottom: '1rem' }} role="alert">
+          <i className="ri-error-warning-fill" />
+          <div style={{ flex: 1 }}>{actionError}</div>
+          <button className="btn-table-action" onClick={() => setActionError(null)} title="Yopish">
+            <i className="ri-close-line" />
+          </button>
+        </div>
+      )}
+
+      {notice && (
+        <div className="rule-guard-banner" style={{ marginBottom: '1rem' }} role="status">
+          <i className="ri-checkbox-circle-line" />
+          <div>{notice}</div>
+        </div>
+      )}
+
       <div className="uyushma-toolbar">
         <div className="uyushma-search-input">
           <i className="ri-search-line" />
@@ -187,7 +165,7 @@ export function UyushmaRoutes() {
             type="text"
             placeholder="Yo'nalish raqami yoki nomi bo'yicha qidirish..."
             value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
+            onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
@@ -195,14 +173,13 @@ export function UyushmaRoutes() {
         </div>
       </div>
 
-      {/* Routes Table */}
       <div className="uyushma-table-wrapper">
         <table className="uyushma-table">
           <thead>
             <tr>
               <th>Raqam</th>
               <th>Yo'nalish nomi</th>
-              <th>Yo'nalish qismlari (Directions)</th>
+              <th>Yo'nalish qismlari</th>
               <th>Transportlar</th>
               <th>Haydovchilar</th>
               <th>Holat</th>
@@ -213,271 +190,168 @@ export function UyushmaRoutes() {
             {isLoading ? (
               <tr>
                 <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-secondary)' }}>
-                  <i className="ri-loader-4-line ri-spin" style={{ fontSize: '1.5rem', color: 'var(--accent-primary)' }} />
+                  <i className="ri-loader-4-line" style={{ fontSize: '1.5rem', color: 'var(--accent-primary)' }} />
                   <div style={{ marginTop: '0.5rem' }}>Yuklanmoqda...</div>
+                </td>
+              </tr>
+            ) : loadError ? (
+              <tr>
+                <td colSpan={7} style={{ textAlign: 'center', padding: '2rem' }}>
+                  <div style={{ color: 'var(--danger)', marginBottom: '0.75rem' }}>
+                    <i className="ri-error-warning-line" /> {loadError}
+                  </div>
+                  <button className="btn-secondary-action" onClick={loadRoutes}>
+                    <i className="ri-refresh-line" /> Qayta urinish
+                  </button>
                 </td>
               </tr>
             ) : filteredRoutes.length === 0 ? (
               <tr>
                 <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>
-                  Yo'nalishlar topilmadi.
+                  {routes.length === 0 && !scopeMissing
+                    ? "Hali yo'nalish yo'q — «Yangi yo'nalish» tugmasi orqali yarating."
+                    : "Yo'nalishlar topilmadi."}
                 </td>
               </tr>
             ) : (
-              filteredRoutes.map(r => (
-                <tr key={r.id}>
-                  <td>
-                    <span className="route-number-badge">№ {r.route_number}</span>
-                  </td>
-                  <td>
-                    <div style={{ fontWeight: 600 }}>{r.route_name}</div>
-                    {r.description && (
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{r.description}</div>
-                    )}
-                  </td>
-                  <td>
-                    <button
-                      className="btn-secondary-action"
-                      style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}
-                      onClick={() => setSelectedRouteDirections(r)}
-                    >
-                      <i className="ri-guide-line" />
-                      2 ta yo'nalish (A ⇄ B)
-                    </button>
-                  </td>
-                  <td>
-                    <span style={{ fontWeight: 600 }}>{r.assigned_vehicles_count}</span> ta
-                  </td>
-                  <td>
-                    <span style={{ fontWeight: 600 }}>{r.assigned_drivers_count}</span> ta
-                  </td>
-                  <td>
-                    <span className={`status-pill ${r.is_active ? 'active' : 'inactive'}`}>
-                      <i className="ri-circle-fill" style={{ fontSize: '0.5rem' }} />
-                      {r.is_active ? 'Faol' : 'To\'xtatilgan'}
-                    </span>
-                  </td>
-                  <td>
-                    <div className="table-actions" style={{ justifyContent: 'flex-end' }}>
+              filteredRoutes.map((r) => {
+                const dirState = directionState(r)
+                const busy = busyId === r.id
+                return (
+                  <tr key={r.id}>
+                    <td>
+                      <span className="route-number-badge">№ {r.route_number}</span>
+                    </td>
+                    <td>
+                      <div style={{ fontWeight: 600 }}>{r.route_name}</div>
+                      {r.description && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{r.description}</div>
+                      )}
+                    </td>
+                    <td>
                       <button
-                        className="btn-table-action"
-                        onClick={() => navigate(`/uyushma/routes/editor/${r.id}`)}
-                        title="Visual Route Editor (Xaritada tahrirlash)"
+                        className="btn-secondary-action"
+                        style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}
+                        onClick={() => setSelectedRoute(r)}
+                        title="Yo'nalish qismlari tafsilotlari"
                       >
-                        <i className="ri-map-pin-line" style={{ color: 'var(--accent-primary)' }} />
+                        <i
+                          className={dirState.drawn === 2 ? 'ri-guide-line' : 'ri-error-warning-line'}
+                          style={{ color: dirState.drawn === 2 ? undefined : 'var(--warning)' }}
+                        />
+                        {dirState.label}
                       </button>
-                      <button
-                        className="btn-table-action"
-                        onClick={() => openEditModal(r)}
-                        title="Tahrirlash"
-                      >
-                        <i className="ri-edit-line" />
-                      </button>
-                      <button
-                        className="btn-table-action danger"
-                        onClick={() => handleDeleteRoute(r.id)}
-                        title="O'chirish"
-                      >
-                        <i className="ri-delete-bin-line" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
+                    </td>
+                    <td>
+                      <span style={{ fontWeight: 600 }}>{r.assigned_vehicles_count}</span> ta
+                    </td>
+                    <td>
+                      <span style={{ fontWeight: 600 }}>{r.assigned_drivers_count}</span> ta
+                    </td>
+                    <td>
+                      <span className={`status-pill ${r.is_active ? 'active' : 'inactive'}`}>
+                        <i className="ri-circle-fill" style={{ fontSize: '0.5rem' }} />
+                        {r.is_active ? 'Chop etilgan' : 'Qoralama'}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="table-actions" style={{ justifyContent: 'flex-end' }}>
+                        <button
+                          className="btn-table-action"
+                          onClick={() => navigate(editorPath(r.id))}
+                          title="Xaritada tahrirlash (Visual Route Editor)"
+                        >
+                          <i className="ri-map-pin-line" style={{ color: 'var(--accent-primary)' }} />
+                        </button>
+                        <button
+                          className="btn-table-action"
+                          onClick={() => handleTogglePublish(r)}
+                          disabled={busy}
+                          title={r.is_active ? "Yo'lovchilardan yashirish" : 'Chop etish (ikkala yo‘nalish chizilgan bo‘lishi kerak)'}
+                        >
+                          <i
+                            className={busy ? 'ri-loader-4-line' : r.is_active ? 'ri-eye-off-line' : 'ri-check-double-line'}
+                            style={{ color: r.is_active ? 'var(--warning)' : 'var(--success)' }}
+                          />
+                        </button>
+                        <button
+                          className="btn-table-action danger"
+                          onClick={() => handleArchiveRoute(r)}
+                          disabled={busy}
+                          title="Arxivlash"
+                        >
+                          <i className="ri-archive-line" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })
             )}
           </tbody>
         </table>
       </div>
 
-      {/* Modal: Create/Edit Route */}
-      {isModalOpen && (
-        <div className="uyushma-modal-overlay" onClick={() => setIsModalOpen(false)}>
-          <div className="uyushma-modal-card" onClick={e => e.stopPropagation()}>
+      {selectedRoute && (
+        <div className="uyushma-modal-overlay" onClick={() => setSelectedRoute(null)}>
+          <div className="uyushma-modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="uyushma-modal-header">
               <h3>
-                <i className="ri-route-line" style={{ color: 'var(--accent-primary)' }} />
-                {editingRoute ? "Yo'nalishni tahrirlash" : "Yangi yo'nalish yaratish"}
+                <span className="route-number-badge" style={{ marginRight: '0.5rem' }}>
+                  № {selectedRoute.route_number}
+                </span>
+                Yo'nalish qismlari
               </h3>
-              <button className="btn-modal-close" onClick={() => setIsModalOpen(false)}>
-                <i className="ri-close-line" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveRoute}>
-              <div className="uyushma-modal-body">
-                {formError && (
-                  <div className="rule-conflict-alert">
-                    <i className="ri-error-warning-fill" />
-                    <div>{formError}</div>
-                  </div>
-                )}
-
-                <div className="form-grid-2">
-                  <div className="uyushma-form-group">
-                    <label>Yo'nalish raqami *</label>
-                    <input
-                      type="text"
-                      className="uyushma-input"
-                      placeholder="Masalan: 12"
-                      value={routeNumber}
-                      onChange={e => setRouteNumber(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  <div className="uyushma-form-group">
-                    <label>Holati</label>
-                    <select
-                      className="uyushma-select"
-                      value={isActive ? 'true' : 'false'}
-                      onChange={e => setIsActive(e.target.value === 'true')}
-                    >
-                      <option value="true">Faol</option>
-                      <option value="false">Faol emas</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="uyushma-form-group">
-                  <label>Yo'nalish nomi *</label>
-                  <input
-                    type="text"
-                    className="uyushma-input"
-                    placeholder="Masalan: O'sh ko'chasi — Yangi Bozor"
-                    value={routeName}
-                    onChange={e => setRouteName(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="uyushma-form-group">
-                  <label>Tavsif (ixtiyoriy)</label>
-                  <textarea
-                    className="uyushma-textarea"
-                    rows={2}
-                    placeholder="Magistral, bekatlar va oraliq nuqtalar haqida ma'lumot..."
-                    value={description}
-                    onChange={e => setDescription(e.target.value)}
-                  />
-                </div>
-
-                <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
-                  <label style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.5rem', display: 'block' }}>
-                    <i className="ri-compass-3-line" style={{ color: 'var(--accent-primary)', marginRight: '0.4rem' }} />
-                    Yo'nalish qismlari (Outbound va Inbound)
-                  </label>
-
-                  <div className="form-grid-2" style={{ marginBottom: '0.75rem' }}>
-                    <div className="uyushma-form-group">
-                      <label>Borish (Outbound) — Bosh bekat</label>
-                      <input
-                        type="text"
-                        className="uyushma-input"
-                        value={outboundStart}
-                        onChange={e => setOutboundStart(e.target.value)}
-                      />
-                    </div>
-                    <div className="uyushma-form-group">
-                      <label>Borish (Outbound) — Oxirgi bekat</label>
-                      <input
-                        type="text"
-                        className="uyushma-input"
-                        value={outboundEnd}
-                        onChange={e => setOutboundEnd(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-grid-2">
-                    <div className="uyushma-form-group">
-                      <label>Qaytish (Inbound) — Bosh bekat</label>
-                      <input
-                        type="text"
-                        className="uyushma-input"
-                        value={inboundStart}
-                        onChange={e => setInboundStart(e.target.value)}
-                      />
-                    </div>
-                    <div className="uyushma-form-group">
-                      <label>Qaytish (Inbound) — Oxirgi bekat</label>
-                      <input
-                        type="text"
-                        className="uyushma-input"
-                        value={inboundEnd}
-                        onChange={e => setInboundEnd(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="uyushma-modal-footer">
-                <button
-                  type="button"
-                  className="btn-secondary-action"
-                  onClick={() => setIsModalOpen(false)}
-                >
-                  Bekor qilish
-                </button>
-                <button type="submit" className="btn-primary-action">
-                  <i className="ri-save-line" />
-                  Saqlash
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: View Directions details */}
-      {selectedRouteDirections && (
-        <div className="uyushma-modal-overlay" onClick={() => setSelectedRouteDirections(null)}>
-          <div className="uyushma-modal-card" onClick={e => e.stopPropagation()}>
-            <div className="uyushma-modal-header">
-              <h3>
-                <span className="route-number-badge" style={{ marginRight: '0.5rem' }}>№ {selectedRouteDirections.route_number}</span>
-                Yo'nalish qismlari (Directions)
-              </h3>
-              <button className="btn-modal-close" onClick={() => setSelectedRouteDirections(null)}>
+              <button className="btn-modal-close" onClick={() => setSelectedRoute(null)}>
                 <i className="ri-close-line" />
               </button>
             </div>
 
             <div className="uyushma-modal-body">
               <div className="directions-list">
-                {selectedRouteDirections.directions.map(dir => (
-                  <div key={dir.id} className="direction-card">
-                    <div>
-                      <div className="direction-card__name">
-                        {dir.direction === 'outbound' ? '➡️ Borish yo\'nalishi (Outbound)' : '⬅️ Qaytish yo\'nalishi (Inbound)'}
+                {(['outbound', 'inbound'] as const).map((type) => {
+                  const dir = selectedRoute.directions.find((d) => d.direction === type)
+                  return (
+                    <div key={type} className="direction-card">
+                      <div>
+                        <div className="direction-card__name">
+                          <i className={type === 'outbound' ? 'ri-arrow-right-line' : 'ri-arrow-left-line'} />{' '}
+                          {DIRECTION_TITLES[type]}
+                        </div>
+                        {dir ? (
+                          <>
+                            <div style={{ color: 'var(--text-primary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                              {dir.start_name} ➔ {dir.end_name}
+                            </div>
+                            <div className="direction-card__stats">
+                              {dir.distance_km} km • {dir.stops_count} ta nuqta • ~{dir.estimated_duration_min} daqiqa
+                            </div>
+                          </>
+                        ) : (
+                          <div className="direction-card__stats">Hali chizilmagan</div>
+                        )}
                       </div>
-                      <div style={{ color: 'var(--text-primary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-                        {dir.start_name} ➔ {dir.end_name}
-                      </div>
-                      <div className="direction-card__stats">
-                        {dir.distance_km} km • {dir.stops_count} ta bekat • ~{dir.estimated_duration_min} daqiqa
-                      </div>
+                      <span className={`status-pill ${dir?.is_active ? 'active' : 'inactive'}`}>
+                        {dir?.is_active ? 'Geometriya bor' : 'Geometriya yo‘q'}
+                      </span>
                     </div>
-                    <span className={`status-pill ${dir.is_active ? 'active' : 'inactive'}`}>
-                      {dir.is_active ? 'Faol' : 'Nofaol'}
-                    </span>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
 
             <div className="uyushma-modal-footer">
-              <button
-                type="button"
-                className="btn-primary-action"
-                onClick={() => setSelectedRouteDirections(null)}
-              >
+              <button type="button" className="btn-secondary-action" onClick={() => setSelectedRoute(null)}>
                 Yopish
+              </button>
+              <button type="button" className="btn-primary-action" onClick={() => navigate(editorPath(selectedRoute.id))}>
+                <i className="ri-map-2-line" />
+                Xaritada tahrirlash
               </button>
             </div>
           </div>
         </div>
       )}
     </div>
-  );
+  )
 }

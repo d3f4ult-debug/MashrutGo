@@ -6,7 +6,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: calc(100% + 2rem); /* full-bleed: the parent padding is cancelled by the negative margin */
   margin: -1rem; /* Offset parent padding to go full-bleed */
   overflow: hidden;
 }
@@ -148,10 +148,6 @@
 
 /* ── Parking status panel ── */
 .map-parking-panel {
-  position: absolute;
-  bottom: 0.75rem;
-  left: 0.75rem;
-  right: 0.75rem;
   display: flex;
   gap: 0.5rem;
   z-index: 5;
@@ -405,4 +401,135 @@
     min-width: 150px;
     padding: 0.375rem 0.5rem;
   }
+}
+
+/* ── Bottom panels (waiting passengers + stoyankas) ── */
+.map-bottom-panels {
+  position: absolute;
+  bottom: 0.75rem;
+  left: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.map-bottom-panels > * {
+  pointer-events: auto;
+}
+
+.map-parking-card {
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+.map-waiting-list {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 0.25rem;
+}
+
+.map-waiting-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 0.5rem;
+  align-items: center;
+  flex-shrink: 0;
+  min-width: 140px;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-elevated);
+  border: 1px solid rgba(249, 115, 22, 0.45);
+  border-radius: 0.625rem;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+}
+
+.map-waiting-item i {
+  grid-row: span 2;
+  color: #f97316;
+  font-size: 1.125rem;
+}
+
+.map-waiting-item span {
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.map-waiting-item small {
+  font-size: 0.625rem;
+  color: var(--text-tertiary);
+}
+
+.waiting-client-marker--other .waiting-client-marker__dot {
+  background: linear-gradient(135deg, #94a3b8, #64748b);
+  box-shadow: none;
+}
+
+.waiting-client-marker--other .waiting-client-marker__pulse {
+  display: none;
+}
+
+.driver-self-marker {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  border: 3px solid #fff;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.25), 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.map-locate-btn {
+  position: absolute;
+  top: 6rem;
+  left: 0.75rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.625rem;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+  color: var(--accent-primary);
+  font-size: 1.25rem;
+  z-index: 5;
+  cursor: pointer;
+}
+
+.map-shift-hint {
+  position: absolute;
+  top: 7.5rem; /* below the route pill and the legend */
+  left: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-elevated);
+  border: 1px solid var(--warning);
+  border-radius: 0.625rem;
+  color: var(--warning);
+  font-size: 0.75rem;
+  z-index: 6;
+}
+
+.map-shift-hint span {
+  color: var(--text-primary);
+}
+
+.map-shift-hint a {
+  color: var(--accent-primary);
+  font-weight: 700;
 }

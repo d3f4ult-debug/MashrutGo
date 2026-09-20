@@ -1,88 +1,27 @@
-import logging
+"""Client route watch ("Kutayapman") and ride state. Anonymous-friendly, session-secret protected."""
 from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db
-from app.api.deps import get_optional_current_user, require_driver
+from app.api.deps import get_db_dep, get_optional_current_user
 from app.models.shift import ClientRideState, ClientRouteWatch
 from app.models.user import User
 from app.schemas.client_watch import (
+    CurrentRideResponse,
     RideStateResponse,
     RideStateUpdateRequest,
-    WaitingPassengersListResponse,
-    WaitingPassengerResponse,
     WatchHeartbeatRequest,
     WatchResponse,
     WatchStartRequest,
+    WatchStopRequest,
 )
-from app.services.realtime.client_watch_service import client_watch_service
+from app.services.realtime.client_watch_service import WatchError, client_watch_service
 
-logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/client", tags=["client-watch"])
-driver_router = APIRouter(prefix="/driver", tags=["driver"])
 
 
-@router.post("/watch/start", response_model=WatchResponse, status_code=status.HTTP_201_CREATED)
-async def start_route_watch(
-    req: WatchStartRequest,
-    current_user: Optional[User] = Depends(get_optional_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Client starts watching a route direction with exact GPS location.
-    Anonymous or authenticated. Broadcasts passenger coordinate to route drivers.
-    """
-    try:
-        user_id = current_user.id if current_user else None
-        watch = await client_watch_service.start_watch(
-            route_id=req.route_id,
-            direction=req.direction,
-            lat=req.lat,
-            lng=req.lng,
-            accuracy_meters=req.accuracy_meters or 5.0,
-            session_id=req.session_id,
-            user_id=user_id,
-            db=db,
-        )
-        return WatchResponse(
-            id=watch.id,
-            watch_id=watch.id,
-            client_session_id=watch.client_session_id,
-            route_id=watch.route_id,
-            direction=watch.direction,
-            lat=watch.lat,
-            lng=watch.lng,
-            status=watch.status,
-            started_at=watch.started_at,
-            expires_at=watch.expires_at,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error starting route watch: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to start watch session")
-
-
-@router.post("/watch/heartbeat", response_model=WatchResponse)
-async def route_watch_heartbeat(
-    req: WatchHeartbeatRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    Client sends heartbeat (every 30s) to keep watch alive and update GPS.
-    """
-    watch = await client_watch_service.heartbeat(
-        watch_id=req.watch_id,
-        lat=req.lat,
-        lng=req.lng,
-        db=db,
-    )
-    if not watch:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Watch session not found or already inactive",
-        )
+def _watch_response(watch: ClientRouteWatch) -> WatchResponse:
     return WatchResponse(
         id=watch.id,
         watch_id=watch.id,
@@ -97,119 +36,103 @@ async def route_watch_heartbeat(
     )
 
 
-@router.post("/watch/stop", status_code=status.HTTP_200_OK)
-async def stop_route_watch(
-    watch_id: int = Query(...),
-    db: Session = Depends(get_db),
+def _error(exc: WatchError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+@router.post("/watch/start", response_model=WatchResponse, status_code=status.HTTP_201_CREATED)
+async def start_route_watch(
+    req: WatchStartRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db_dep),
 ):
     """
-    Client manually cancels watch before boarding. Revokes driver broadcast.
+    Start "Kutayapman": the exact GPS point is shared with drivers currently serving this route.
+    Returns `client_session_id` — a secret the client must send with every later watch call.
     """
-    result = await client_watch_service.update_ride_state(
-        watch_id=watch_id,
-        state="stopped",
-        vehicle_id=None,
-        db=db,
-    )
-    return {"detail": "Watch session stopped", "watch_id": watch_id}
+    try:
+        watch = await client_watch_service.start_watch(
+            route_id=req.route_id,
+            direction=req.direction,
+            lat=req.lat,
+            lng=req.lng,
+            accuracy_meters=req.accuracy_meters,
+            session_id=req.session_id,
+            user_id=current_user.id if current_user else None,
+            db=db,
+        )
+    except WatchError as exc:
+        raise _error(exc) from exc
+    return _watch_response(watch)
+
+
+@router.post("/watch/heartbeat", response_model=WatchResponse)
+async def route_watch_heartbeat(req: WatchHeartbeatRequest, db: Session = Depends(get_db_dep)):
+    """Keep the watch alive (send at least every 30 s) and optionally update the waiting position."""
+    try:
+        watch = await client_watch_service.heartbeat(req.watch_id, req.session_id, req.lat, req.lng, db)
+    except WatchError as exc:
+        raise _error(exc) from exc
+    return _watch_response(watch)
+
+
+@router.post("/watch/stop")
+async def stop_route_watch(req: WatchStopRequest, db: Session = Depends(get_db_dep)):
+    """Cancel waiting before boarding; drivers stop seeing the point immediately."""
+    try:
+        result = await client_watch_service.update_ride_state(req.watch_id, req.session_id, "stopped", db)
+    except WatchError as exc:
+        raise _error(exc) from exc
+    return {"detail": "Watch session stopped", **result}
 
 
 @router.post("/ride/state", response_model=RideStateResponse)
-async def update_ride_state(
-    req: RideStateUpdateRequest,
-    db: Session = Depends(get_db),
-):
+async def update_ride_state(req: RideStateUpdateRequest, db: Session = Depends(get_db_dep)):
     """
-    Update passenger ride state:
-    - 'on_car' (Mashinadaman): IMMEDIATELY STOPS BROADCAST to drivers for privacy.
-    - 'exited' (Tushdim): Completes the ride state.
-    Concrete vehicle selection is NOT required.
+    - `on_car` (Mashinadaman): broadcast to drivers stops IMMEDIATELY.
+    - `exited` (Tushdim): ride finished.
+    No concrete vehicle selection is required.
     """
     try:
-        res = await client_watch_service.update_ride_state(
-            watch_id=req.watch_id,
-            state=req.state,
-            vehicle_id=req.vehicle_id,
-            db=db,
-        )
-
-        watch = db.query(ClientRouteWatch).filter(ClientRouteWatch.id == req.watch_id).first()
-        ride_state = (
-            db.query(ClientRideState)
-            .filter(ClientRideState.client_session_id == watch.client_session_id)
-            .order_by(ClientRideState.id.desc())
-            .first()
-        )
-
-        return RideStateResponse(
-            id=ride_state.id,
-            client_session_id=ride_state.client_session_id,
-            route_id=ride_state.route_id,
-            vehicle_id=ride_state.vehicle_id,
-            state=ride_state.state,
-            boarded_at=ride_state.boarded_at,
-            exited_at=ride_state.exited_at,
-            created_at=ride_state.created_at,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-
-
-@router.get("/ride/current")
-async def get_current_ride(
-    session_id: Optional[str] = Query(None),
-    current_user: Optional[User] = Depends(get_optional_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Check current active watch session and ride state for client.
-    """
-    query = db.query(ClientRouteWatch)
-    if current_user:
-        query = query.filter(ClientRouteWatch.user_id == current_user.id)
-    elif session_id:
-        query = query.filter(ClientRouteWatch.client_session_id == session_id)
-    else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Must provide session_id or auth token")
-
-    watch = query.order_by(ClientRouteWatch.id.desc()).first()
-    if not watch:
-        return {"active": False, "watch": None, "ride_state": None}
-
-    ride_state = (
+        await client_watch_service.update_ride_state(req.watch_id, req.session_id, req.state, db, vehicle_id=req.vehicle_id)
+    except WatchError as exc:
+        raise _error(exc) from exc
+    watch = client_watch_service.get_owned_watch(db, req.watch_id, req.session_id)
+    ride = (
         db.query(ClientRideState)
         .filter(ClientRideState.client_session_id == watch.client_session_id)
         .order_by(ClientRideState.id.desc())
         .first()
     )
-
-    return {
-        "active": watch.status in ("active", "on_car"),
-        "watch": WatchResponse.model_validate(watch) if watch else None,
-        "ride_state": RideStateResponse.model_validate(ride_state) if ride_state else None,
-    }
+    return RideStateResponse.model_validate(ride)
 
 
-# Driver endpoint to view waiting passengers
-@driver_router.get("/passengers/waiting", response_model=WaitingPassengersListResponse)
-async def list_waiting_passengers_for_driver(
-    route_id: int = Query(..., description="Route ID to inspect"),
-    direction: Optional[str] = Query(None, description="outbound or inbound"),
-    driver: User = Depends(require_driver),
-    db: Session = Depends(get_db),
+@router.get("/ride/current", response_model=CurrentRideResponse)
+def get_current_ride(
+    session_id: Optional[str] = Query(None, min_length=16, max_length=64),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db_dep),
 ):
-    """
-    Active driver queries waiting passengers on their route.
-    """
-    passengers_raw = client_watch_service.get_waiting_passengers(
-        route_id=route_id,
-        direction=direction,
-        db=db,
+    """Restore watch/ride state after a reload (by session secret, or by account when signed in)."""
+    query = db.query(ClientRouteWatch)
+    if session_id:
+        query = query.filter(ClientRouteWatch.client_session_id == session_id)
+    elif current_user:
+        query = query.filter(ClientRouteWatch.user_id == current_user.id)
+    else:
+        raise HTTPException(status_code=400, detail="session_id or auth token required")
+
+    watch = query.order_by(ClientRouteWatch.id.desc()).first()
+    if not watch:
+        return CurrentRideResponse(active=False)
+    ride = (
+        db.query(ClientRideState)
+        .filter(ClientRideState.client_session_id == watch.client_session_id)
+        .order_by(ClientRideState.id.desc())
+        .first()
     )
-    passengers = [WaitingPassengerResponse(**p) for p in passengers_raw]
-    return WaitingPassengersListResponse(
-        route_id=route_id,
-        direction=direction,
-        total_waiting=len(passengers),
-        passengers=passengers,
+    return CurrentRideResponse(
+        active=watch.status in ("active", "on_car"),
+        watch=_watch_response(watch),
+        ride_state=RideStateResponse.model_validate(ride) if ride else None,
     )

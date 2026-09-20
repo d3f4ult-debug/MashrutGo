@@ -1,20 +1,19 @@
-import { Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
-import type { UserRole } from '../../types/auth';
+import { Navigate, useLocation } from 'react-router-dom'
+import { useAuth } from '../../contexts/AuthContext'
+import { ROLE_HOME, type UserRole } from '../../types/auth'
 
 interface RoleGuardProps {
-  allowedRoles: UserRole[];
-  children: React.ReactNode;
+  allowedRoles: UserRole[]
+  children: React.ReactNode
 }
 
 /**
- * Route guard that checks authentication and role authorization.
- * Redirects to /login if not authenticated.
- * Redirects to the user's home if role is not allowed.
+ * Route guard: unauthenticated users go to /login, users of another role go to their own home.
+ * The backend enforces the same rules on every API call (this guard is UX only).
  */
 export function RoleGuard({ allowedRoles, children }: RoleGuardProps) {
-  const { isAuthenticated, isLoading, user } = useAuth();
-  const location = useLocation();
+  const { isAuthenticated, isLoading, user } = useAuth()
+  const location = useLocation()
 
   if (isLoading) {
     return (
@@ -22,22 +21,16 @@ export function RoleGuard({ allowedRoles, children }: RoleGuardProps) {
         <div className="loading-spinner" />
         <p>Yuklanmoqda...</p>
       </div>
-    );
+    )
   }
 
   if (!isAuthenticated || !user) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    return <Navigate to="/login" state={{ from: location }} replace />
   }
 
   if (!allowedRoles.includes(user.role)) {
-    // Redirect to the user's own home based on role
-    const roleHome: Record<UserRole, string> = {
-      driver: '/driver',
-      uyushma: '/uyushma',
-      admin: '/admin',
-    };
-    return <Navigate to={roleHome[user.role]} replace />;
+    return <Navigate to={ROLE_HOME[user.role]} replace />
   }
 
-  return <>{children}</>;
+  return <>{children}</>
 }

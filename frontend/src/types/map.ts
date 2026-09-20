@@ -1,81 +1,81 @@
-// ── Map & realtime types used by Driver live map ──
+// ── Realtime contract types (docs/contracts/REALTIME_EVENTS.md) ──
 
-/** GeoJSON LineString for route geometry */
-export interface RouteGeometry {
-  type: 'LineString';
-  coordinates: [number, number][]; // [lng, lat]
-}
-
-/** Route direction with geometry from backend */
-export interface RouteDirection {
-  id: string;
-  route_id: string;
-  direction: 'outbound' | 'inbound';
-  start_name: string;
-  end_name: string;
-  geometry: RouteGeometry;
-}
-
-/** Assigned route info for the driver */
-export interface DriverRouteInfo {
-  route_id: string;
-  route_number: string;
-  route_name: string;
-  directions: RouteDirection[];
-}
-
-/** Waiting client marker — client in "Kutayapman" state */
-export interface WaitingClient {
-  session_id: string;      // no PII, just session/marker ID
-  lat: number;
-  lng: number;
-  timestamp: number;       // Unix ms
-}
-
-/** Parking/stoyanka geofence status */
-export interface ParkingStatus {
-  parking_id: string;
-  name: string;
-  lat: number;
-  lng: number;
-  radius_m: number;
-  vehicle_count: number;
-  is_driver_inside: boolean;
-}
-
-// ── WebSocket event types ──
+// ── WebSocket events (server -> client), see docs/contracts/REALTIME_EVENTS.md ──
 
 export type WsEventType =
-  | 'client.watch.started'
-  | 'client.watch.updated'
-  | 'client.watch.stopped'   // "Mashinadaman" or explicit stop
-  | 'parking.count.updated'
   | 'vehicle.location.updated'
+  | 'route.vehicle.status'
+  | 'parking.count.updated'
+  | 'parking.status'
+  | 'client.nearby.snapshot'
+  | 'client.nearby.broadcast'
+  | 'client.nearby.removed'
   | 'payment.received'
   | 'payment.refunded'
-  | 'cashout.status_updated';
+  | 'cashout.status_updated'
+  | 'shift.force_ended'
+  | 'subscribed'
+  | 'error'
 
 export interface WsEvent<T = unknown> {
-  type: WsEventType;
-  payload: T;
-  timestamp: number;
+  type: WsEventType
+  payload: T
+  timestamp: number
 }
 
-/** Payload for client.watch.started / .updated */
-export interface ClientWatchPayload {
-  session_id: string;
-  lat: number;
-  lng: number;
+export interface VehicleLocationPayload {
+  vehicle_id: string
+  plate_number?: string | null
+  route_id: number
+  route_number: string
+  direction: 'outbound' | 'inbound'
+  lat: number
+  lng: number
+  heading: number
+  speed_kmh: number
+  accuracy_meters: number
+  captured_at: string
+  is_stale: boolean
+  parking_id?: number | null
+  parking_name?: string | null
 }
 
-/** Payload for client.watch.stopped ("Mashinadaman") */
-export interface ClientWatchStoppedPayload {
-  session_id: string;
+export interface RouteStatusPayload {
+  route_id: number
+  route_number: string
+  online_vehicles_count: number
+  status: 'online' | 'no_online_vehicle_visible'
+  has_live_vehicles: boolean
 }
 
-/** Payload for parking.count.updated */
+export interface NearbyClientPayload {
+  watch_id: string
+  route_id: number
+  direction: 'outbound' | 'inbound'
+  client_lat: number
+  client_lng: number
+  waiting_since: string | null
+  action: 'active' | 'updated'
+}
+
+export interface NearbyRemovedPayload {
+  watch_id: string
+  reason: 'on_car' | 'exited' | 'cancelled' | 'expired' | 'replaced'
+}
+
+export interface NearbySnapshotPayload {
+  route_id: number
+  passengers: NearbyClientPayload[]
+}
+
 export interface ParkingCountPayload {
-  parking_id: string;
-  vehicle_count: number;
-  is_driver_inside: boolean;
+  parking_id: number
+  parking_name: string
+  vehicle_count: number
+}
+
+export interface DriverParkingPayload {
+  parking_id: number | null
+  parking_name: string | null
+  is_inside: boolean
 }

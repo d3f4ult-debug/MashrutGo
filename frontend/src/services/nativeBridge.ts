@@ -26,7 +26,7 @@ export interface NativeNfcResult {
 declare global {
   interface Window {
     isNativeWrapper?: boolean;
-    nativePlatform?: 'android' | 'iOS' | string;
+    nativePlatform?: 'android' | 'ios' | string;
     nativeFcmToken?: string;
     MashrutGoNativeBridge?: {
       postMessage: (message: string) => void;
@@ -36,6 +36,33 @@ declare global {
     onNativeNfcResult?: (result: NativeNfcResult) => void;
   }
 }
+
+/**
+ * A native call that never gets an answer (host busy, older wrapper without the action) must not
+ * hang the caller forever: every request below resolves with a fallback when the timeout expires.
+ */
+function awaitNative<T>(
+  install: (resolve: (value: T) => void) => void,
+  cleanup: () => void,
+  timeoutMs: number,
+  onTimeout: () => T,
+): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let settled = false;
+    const finish = (value: T) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      cleanup();
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(onTimeout()), timeoutMs);
+    install(finish);
+  });
+}
+
+const NATIVE_TIMEOUT_MS = 12_000;
+const NFC_TIMEOUT_MS = 60_000;
 
 export const nativeBridge = {
   /**
@@ -47,10 +74,10 @@ export const nativeBridge = {
   },
 
   /**
-   * Get the native platform (e.g. "android" or "iOS")
+   * Native platform reported by the wrapper: "android" | "ios" (or "web" in a browser)
    */
   getPlatform(): string {
-    return window.nativePlatform || 'web';
+    return (window.nativePlatform || 'web').toLowerCase();
   },
 
   /**
@@ -96,12 +123,17 @@ export const nativeBridge = {
       });
     }
 
-    return new Promise((resolve) => {
-      window.onNativeLocation = (loc) => {
-        resolve(loc);
-      };
-      this.postAction('requestLocation');
-    });
+    return awaitNative<NativeLocation | null>(
+      (resolve) => {
+        window.onNativeLocation = (loc) => resolve(loc);
+        if (!this.postAction('requestLocation')) resolve(null);
+      },
+      () => {
+        window.onNativeLocation = undefined;
+      },
+      NATIVE_TIMEOUT_MS,
+      () => null,
+    );
   },
 
   /**
@@ -116,12 +148,17 @@ export const nativeBridge = {
       return Promise.resolve(null);
     }
 
-    return new Promise((resolve) => {
-      window.onNativeFcmToken = (token) => {
-        resolve(token);
-      };
-      this.postAction('getFcmToken');
-    });
+    return awaitNative<string | null>(
+      (resolve) => {
+        window.onNativeFcmToken = (token) => resolve(token);
+        if (!this.postAction('getFcmToken')) resolve(null);
+      },
+      () => {
+        window.onNativeFcmToken = undefined;
+      },
+      NATIVE_TIMEOUT_MS,
+      () => null,
+    );
   },
 
   /**
@@ -135,12 +172,27 @@ export const nativeBridge = {
       });
     }
 
-    return new Promise((resolve) => {
-      window.onNativeNfcResult = (result) => {
-        resolve(result);
-      };
-      this.postAction('scanNfc');
-    });
+    return awaitNative<NativeNfcResult>(
+      (resolve) => {
+        window.onNativeNfcResult = (result) => resolve(result);
+        if (!this.postAction('scanNfc')) {
+          resolve({ success: false, error: 'NFC o‘qishni boshlab bo‘lmadi' });
+        }
+      },
+      () => {
+        window.onNativeNfcResult = undefined;
+      },
+      NFC_TIMEOUT_MS,
+      () => ({ success: false, error: 'NFC kartani o‘qish vaqti tugadi. Qayta urinib ko‘ring.' }),
+    );
+  },
+
+  /**
+   * Keep the screen on while a driver shift transmits GPS (the WebView pauses timers when the
+   * screen sleeps). No-op in a normal browser, where the Screen Wake Lock API is used instead.
+   */
+  setKeepScreenOn(enabled: boolean): boolean {
+    return this.postAction('setKeepScreenOn', { enabled });
   },
 
   /**

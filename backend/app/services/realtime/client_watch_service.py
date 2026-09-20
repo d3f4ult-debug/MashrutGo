@@ -1,29 +1,79 @@
-import asyncio
+"""
+Client route watch ("Kutayapman") and ride state ("Mashinadaman" / "Tushdim").
+
+Privacy rules:
+- A client's exact GPS is sent ONLY to drivers currently serving the watched route, and only
+  while the watch is `active`. `on_car`, `stopped` and `expired` immediately broadcast a removal.
+- Every mutation requires the watch's session secret (`client_session_id`), which is returned
+  only to the client that created the watch. Watch ids alone are not sufficient.
+- Abandoned watches expire after the heartbeat timeout (background sweeper).
+"""
 import logging
-import uuid
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.shift import ClientRideState, ClientRouteWatch
 from app.models.transport import Route
 from app.services.realtime.connection_manager import realtime_manager
 
 logger = logging.getLogger(__name__)
 
-CLIENT_WATCH_EXPIRY_SECONDS = 60  # 60s without heartbeat marks watch expired
+MIN_SESSION_ID_LENGTH = 16
+ON_CAR_AUTO_EXIT_AFTER = timedelta(hours=4)
+
+
+class WatchError(Exception):
+    def __init__(self, message: str, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _expiry(now: datetime) -> datetime:
+    return now + timedelta(seconds=settings.client_watch_heartbeat_timeout_seconds)
+
+
+def _broadcast_payload(watch: ClientRouteWatch, action: str) -> Dict[str, Any]:
+    return {
+        "watch_id": str(watch.id),
+        "route_id": watch.route_id,
+        "direction": watch.direction,
+        "client_lat": watch.lat,
+        "client_lng": watch.lng,
+        "waiting_since": watch.started_at.isoformat() if watch.started_at else None,
+        "action": action,
+    }
 
 
 class ClientWatchService:
-    """
-    Manages anonymous and authenticated passenger route watch sessions,
-    heartbeats, ride state transitions (waiting -> on_car -> exited),
-    and driver nearby broadcasts.
-    """
+    def _latest_ride_state(self, db: Session, watch: ClientRouteWatch) -> Optional[ClientRideState]:
+        return (
+            db.query(ClientRideState)
+            .filter(ClientRideState.client_session_id == watch.client_session_id)
+            .order_by(ClientRideState.id.desc())
+            .first()
+        )
 
-    def __init__(self):
-        # In-memory active watches: watch_id -> dict
-        self._active_watches: Dict[int, Dict[str, Any]] = {}
+    def get_owned_watch(self, db: Session, watch_id: int, session_id: Optional[str]) -> ClientRouteWatch:
+        watch = db.query(ClientRouteWatch).filter(ClientRouteWatch.id == watch_id).first()
+        if not watch or not session_id or not secrets.compare_digest(watch.client_session_id, session_id):
+            # Same response for "missing" and "not yours" to avoid watch-id probing
+            raise WatchError("Watch session not found", 404)
+        return watch
+
+    async def _remove_from_drivers(self, watch: ClientRouteWatch, reason: str) -> None:
+        await realtime_manager.broadcast_to_route_drivers(
+            route_id=watch.route_id,
+            event="client.nearby.removed",
+            data={"watch_id": str(watch.id), "reason": reason},
+        )
 
     async def start_watch(
         self,
@@ -31,24 +81,31 @@ class ClientWatchService:
         direction: str,
         lat: float,
         lng: float,
-        accuracy_meters: float,
+        accuracy_meters: Optional[float],
         session_id: Optional[str],
         user_id: Optional[int],
         db: Session,
     ) -> ClientRouteWatch:
-        """
-        Start watching a route/direction. Persists watch and initial waiting ride state,
-        and broadcasts client.nearby.broadcast to active drivers on the route.
-        """
         route = db.query(Route).filter(Route.id == route_id).first()
-        if not route:
-            raise ValueError(f"Route with id {route_id} not found")
+        if not route or not route.is_published or route.is_archived:
+            raise WatchError(f"Route with id {route_id} not found", 404)
+        if direction not in ("outbound", "inbound"):
+            raise WatchError("direction must be 'outbound' or 'inbound'", 422)
+        if session_id is not None and len(session_id) < MIN_SESSION_ID_LENGTH:
+            raise WatchError(f"session_id must be at least {MIN_SESSION_ID_LENGTH} characters", 422)
+        client_session = session_id or secrets.token_urlsafe(24)
+        now = _utcnow()
 
-        client_session = session_id or uuid.uuid4().hex
-        now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(seconds=CLIENT_WATCH_EXPIRY_SECONDS)
+        # One active watch per session: close any previous one first
+        previous = (
+            db.query(ClientRouteWatch)
+            .filter(ClientRouteWatch.client_session_id == client_session, ClientRouteWatch.status == "active")
+            .all()
+        )
+        for old in previous:
+            old.status = "stopped"
+        db.flush()
 
-        # 1. Create DB Watch Record
         watch = ClientRouteWatch(
             client_session_id=client_session,
             user_id=user_id,
@@ -56,232 +113,139 @@ class ClientWatchService:
             direction=direction,
             lat=lat,
             lng=lng,
+            accuracy_meters=accuracy_meters,
             status="active",
             started_at=now,
             last_heartbeat_at=now,
-            expires_at=expires_at,
+            expires_at=_expiry(now),
         )
         db.add(watch)
+        db.add(ClientRideState(client_session_id=client_session, user_id=user_id, route_id=route_id, state="waiting", created_at=now))
         db.commit()
         db.refresh(watch)
 
-        # 2. Create Initial Waiting Ride State
-        ride_state = ClientRideState(
-            client_session_id=client_session,
-            user_id=user_id,
-            route_id=route_id,
-            state="waiting",
-            created_at=now,
-        )
-        db.add(ride_state)
-        db.commit()
-
-        # 3. Store in Memory Cache
-        self._active_watches[watch.id] = {
-            "watch_id": watch.id,
-            "session_id": client_session,
-            "route_id": route_id,
-            "direction": direction,
-            "lat": lat,
-            "lng": lng,
-            "waiting_since": now.isoformat(),
-            "expires_at": expires_at,
-        }
-
-        # 4. Broadcast to Route Drivers via WebSocket
-        broadcast_payload = {
-            "watch_id": str(watch.id),
-            "route_id": route_id,
-            "direction": direction,
-            "client_lat": lat,
-            "client_lng": lng,
-            "waiting_since": now.isoformat(),
-            "action": "active",
-        }
+        for old in previous:
+            await self._remove_from_drivers(old, "replaced")
         await realtime_manager.broadcast_to_route_drivers(
-            route_id=route_id,
-            event="client.nearby.broadcast",
-            data=broadcast_payload,
+            route_id=route_id, event="client.nearby.broadcast", data=_broadcast_payload(watch, "active")
         )
-
         return watch
 
     async def heartbeat(
         self,
         watch_id: int,
+        session_id: Optional[str],
         lat: Optional[float],
         lng: Optional[float],
         db: Session,
-    ) -> Optional[ClientRouteWatch]:
-        """
-        Extend watch session lifetime and optionally update passenger coordinates.
-        """
-        watch = db.query(ClientRouteWatch).filter(ClientRouteWatch.id == watch_id).first()
-        if not watch or watch.status != "active":
-            return None
-
-        now = datetime.now(timezone.utc)
+    ) -> ClientRouteWatch:
+        watch = self.get_owned_watch(db, watch_id, session_id)
+        if watch.status != "active":
+            raise WatchError("Watch session is no longer active", 409)
+        now = _utcnow()
         watch.last_heartbeat_at = now
-        watch.expires_at = now + timedelta(seconds=CLIENT_WATCH_EXPIRY_SECONDS)
-
+        watch.expires_at = _expiry(now)
+        moved = lat is not None and lng is not None and (lat != watch.lat or lng != watch.lng)
         if lat is not None and lng is not None:
-            watch.lat = lat
-            watch.lng = lng
-
+            watch.lat, watch.lng = lat, lng
         db.commit()
         db.refresh(watch)
-
-        if watch_id in self._active_watches:
-            self._active_watches[watch_id]["expires_at"] = watch.expires_at
-            if lat is not None and lng is not None:
-                self._active_watches[watch_id]["lat"] = lat
-                self._active_watches[watch_id]["lng"] = lng
-
+        if moved:
+            await realtime_manager.broadcast_to_route_drivers(
+                route_id=watch.route_id, event="client.nearby.broadcast", data=_broadcast_payload(watch, "updated")
+            )
         return watch
 
     async def update_ride_state(
         self,
         watch_id: int,
+        session_id: Optional[str],
         state: str,
-        vehicle_id: Optional[int],
         db: Session,
+        vehicle_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """
-        Handle passenger state transitions:
-        - 'on_car' (Mashinadaman): immediately STOP broadcast to drivers (client.nearby.removed)
-        - 'exited' (Tushdim): complete ride state
-        - 'stopped': cancel watch
-        """
-        watch = db.query(ClientRouteWatch).filter(ClientRouteWatch.id == watch_id).first()
-        if not watch:
-            raise ValueError(f"Watch session {watch_id} not found")
-
-        now = datetime.now(timezone.utc)
-
-        # Query latest ride state for this session
-        ride_state = (
-            db.query(ClientRideState)
-            .filter(ClientRideState.client_session_id == watch.client_session_id)
-            .order_by(ClientRideState.id.desc())
-            .first()
-        )
+        watch = self.get_owned_watch(db, watch_id, session_id)
+        ride = self._latest_ride_state(db, watch)
+        now = _utcnow()
 
         if state == "on_car":
+            if watch.status != "active":
+                raise WatchError("Only an active watch can switch to 'on_car'", 409)
             watch.status = "on_car"
-            if ride_state:
-                ride_state.state = "on_car"
-                ride_state.boarded_at = now
+            if ride:
+                ride.state = "on_car"
+                ride.boarded_at = now
                 if vehicle_id:
-                    ride_state.vehicle_id = vehicle_id
-
-            # Remove from in-memory active watches
-            if watch_id in self._active_watches:
-                del self._active_watches[watch_id]
-
-            # IMMEDIATE REVOCATION OF BROADCAST TO DRIVERS (Privacy & Clean Map)
-            remove_payload = {
-                "watch_id": str(watch.id),
-                "reason": "on_car",
-            }
-            await realtime_manager.broadcast_to_route_drivers(
-                route_id=watch.route_id,
-                event="client.nearby.removed",
-                data=remove_payload,
-            )
-
+                    ride.vehicle_id = vehicle_id
+            reason = "on_car"
         elif state == "exited":
+            if watch.status not in ("active", "on_car"):
+                raise WatchError("Ride is already finished", 409)
             watch.status = "stopped"
-            if ride_state:
-                ride_state.state = "exited"
-                ride_state.exited_at = now
-
-            if watch_id in self._active_watches:
-                del self._active_watches[watch_id]
-
-            remove_payload = {
-                "watch_id": str(watch.id),
-                "reason": "exited",
-            }
-            await realtime_manager.broadcast_to_route_drivers(
-                route_id=watch.route_id,
-                event="client.nearby.removed",
-                data=remove_payload,
-            )
-
+            if ride:
+                ride.state = "exited"
+                ride.exited_at = now
+            reason = "exited"
         elif state == "stopped":
+            if watch.status != "active":
+                raise WatchError("Watch is not active", 409)
             watch.status = "stopped"
-            if watch_id in self._active_watches:
-                del self._active_watches[watch_id]
-
-            remove_payload = {
-                "watch_id": str(watch.id),
-                "reason": "cancelled",
-            }
-            await realtime_manager.broadcast_to_route_drivers(
-                route_id=watch.route_id,
-                event="client.nearby.removed",
-                data=remove_payload,
-            )
+            if ride:
+                ride.state = "cancelled"
+                ride.exited_at = now
+            reason = "cancelled"
+        else:
+            raise WatchError("state must be 'on_car', 'exited' or 'stopped'", 422)
 
         db.commit()
         db.refresh(watch)
-        if ride_state:
-            db.refresh(ride_state)
-
+        if ride:
+            db.refresh(ride)
+        # Exact GPS stops flowing to drivers immediately
+        await self._remove_from_drivers(watch, reason)
         return {
             "watch_id": watch.id,
             "status": watch.status,
-            "ride_state": ride_state.state if ride_state else None,
-            "boarded_at": ride_state.boarded_at.isoformat() if (ride_state and ride_state.boarded_at) else None,
-            "exited_at": ride_state.exited_at.isoformat() if (ride_state and ride_state.exited_at) else None,
+            "ride_state": ride.state if ride else None,
+            "boarded_at": ride.boarded_at.isoformat() if ride and ride.boarded_at else None,
+            "exited_at": ride.exited_at.isoformat() if ride and ride.exited_at else None,
         }
 
     async def sweep_expired_watches(self, db: Session) -> List[int]:
-        """
-        Scan and mark abandoned watches as expired. Notifies drivers with reason 'expired'.
-        """
-        now = datetime.now(timezone.utc)
-        expired_db = (
+        now = _utcnow()
+        expired = (
             db.query(ClientRouteWatch)
-            .filter(
-                ClientRouteWatch.status == "active",
-                ClientRouteWatch.expires_at < now,
-            )
+            .filter(ClientRouteWatch.status == "active", ClientRouteWatch.expires_at < now)
             .all()
         )
-
-        expired_ids = []
-        for w in expired_db:
-            w.status = "expired"
-            expired_ids.append(w.id)
-            if w.id in self._active_watches:
-                del self._active_watches[w.id]
-
-            remove_payload = {
-                "watch_id": str(w.id),
-                "reason": "expired",
-            }
-            await realtime_manager.broadcast_to_route_drivers(
-                route_id=w.route_id,
-                event="client.nearby.removed",
-                data=remove_payload,
-            )
-
-        if expired_ids:
+        for watch in expired:
+            watch.status = "expired"
+            ride = self._latest_ride_state(db, watch)
+            if ride and ride.state == "waiting":
+                ride.state = "expired"
+        # Rides where the passenger forgot to press "Tushdim"
+        stale_rides = (
+            db.query(ClientRideState)
+            .filter(ClientRideState.state == "on_car", ClientRideState.boarded_at < now - ON_CAR_AUTO_EXIT_AFTER)
+            .all()
+        )
+        for ride in stale_rides:
+            ride.state = "exited"
+            ride.exited_at = now
+            for watch in (
+                db.query(ClientRouteWatch)
+                .filter(ClientRouteWatch.client_session_id == ride.client_session_id, ClientRouteWatch.status == "on_car")
+                .all()
+            ):
+                watch.status = "stopped"
+        if expired or stale_rides:
             db.commit()
+        for watch in expired:
+            await self._remove_from_drivers(watch, "expired")
+        return [w.id for w in expired]
 
-        return expired_ids
-
-    def get_waiting_passengers(
-        self,
-        route_id: int,
-        direction: Optional[str],
-        db: Session,
-    ) -> List[Dict[str, Any]]:
-        """
-        Query current active waiting passenger pins for drivers on a route.
-        """
-        now = datetime.now(timezone.utc)
+    def get_waiting_passengers(self, route_id: int, direction: Optional[str], db: Session) -> List[Dict[str, Any]]:
+        now = _utcnow()
         query = db.query(ClientRouteWatch).filter(
             ClientRouteWatch.route_id == route_id,
             ClientRouteWatch.status == "active",
@@ -289,10 +253,8 @@ class ClientWatchService:
         )
         if direction:
             query = query.filter(ClientRouteWatch.direction == direction)
-
-        results = []
-        for w in query.all():
-            results.append({
+        return [
+            {
                 "watch_id": w.id,
                 "route_id": w.route_id,
                 "direction": w.direction,
@@ -300,9 +262,9 @@ class ClientWatchService:
                 "client_lng": w.lng,
                 "waiting_since": w.started_at,
                 "action": "active",
-            })
-        return results
+            }
+            for w in query.all()
+        ]
 
 
-# Global singleton
 client_watch_service = ClientWatchService()

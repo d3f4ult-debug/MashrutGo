@@ -28,6 +28,7 @@ def create_access_token(
     uyushma_id: Optional[int] = None,
     expires_delta: Optional[timedelta] = None,
     extra_claims: Optional[Dict[str, Any]] = None,
+    password_changed_at: Optional[datetime] = None,
 ) -> str:
     """Create signed JWT access token."""
     now = datetime.now(timezone.utc)
@@ -44,6 +45,9 @@ def create_access_token(
     }
     if uyushma_id is not None:
         to_encode["uyushma_id"] = uyushma_id
+    # Tokens issued before the last password change are rejected (see api/deps.py)
+    if password_changed_at is not None:
+        to_encode["pwd"] = int(password_changed_at.timestamp())
     if extra_claims:
         to_encode.update(extra_claims)
 

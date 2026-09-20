@@ -1,361 +1,411 @@
 /**
- * Driver Live Map — Stage 2
+ * Driver live map.
  *
- * Features:
- * - MapLibre GL with MapTiler tiles (dark style)
- * - Assigned route geometry (outbound + inbound)
- * - Real-time waiting client markers via WebSocket
- * - Parking geofence status overlay
- * - Connection status indicator
- *
- * Client markers appear on "Kutayapman" and disappear on "Mashinadaman".
- * No client PII is shown — only session ID marker.
+ * - Assigned route geometry (both directions; the current shift direction is highlighted)
+ * - Passengers in "Kutayapman" state on this route, live over the driver WebSocket.
+ *   A marker disappears as soon as the passenger presses "Mashinadaman" (client.nearby.removed).
+ *   No PII: only an anonymous watch id and the waiting time are shown.
+ * - Stoyanka geofences with live vehicle counts; presence is detected automatically by the backend.
+ * - The driver's own position from the GPS transmitter.
  */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import maplibregl from 'maplibre-gl'
+import 'maplibre-gl/dist/maplibre-gl.css'
+import { useDriverSession } from '../../contexts/DriverSessionContext'
+import { driverApi } from '../../services/api/driverApi'
+import { ANDIJON_CENTER, attachStyleFallback, getMapStyle } from '../../services/map/maptiler'
+import { publicChannel } from '../../services/realtime/websocket'
+import { useChannel, useChannelEvent } from '../../hooks/useRealtime'
+import { timeAgo } from '../../utils/format'
+import type { DriverParking, WaitingPassenger } from '../../types/driver'
+import type { ParkingCountPayload } from '../../types/map'
+import './DriverMap.css'
 
-import { useEffect, useRef, useState } from 'react';
-import * as maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
-import { useAuth } from '../../contexts/AuthContext';
-import { apiClient } from '../../services/api/client';
-import { useRealtime, useWaitingClients, useParkingStatus } from '../../hooks/useRealtime';
-import type { DriverRouteInfo, ParkingStatus, WaitingClient } from '../../types/map';
-import './DriverMap.css';
+const ROUTE_COLORS = { outbound: '#3b82f6', inbound: '#22c55e' } as const
+const PARKING_REFRESH_MS = 30_000
 
-const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY || 'get_your_key_at_maptiler';
+type LngLat = [number, number]
 
-// Andijon city center default
-const DEFAULT_CENTER: [number, number] = [72.344, 40.783];
-const DEFAULT_ZOOM = 13;
+function circlePolygon(lat: number, lng: number, radiusM: number): LngLat[] {
+  const points = 48
+  const coords: LngLat[] = []
+  const dLat = radiusM / 111_320
+  const dLng = radiusM / (111_320 * Math.cos((lat * Math.PI) / 180))
+  for (let i = 0; i <= points; i++) {
+    const a = (i / points) * 2 * Math.PI
+    coords.push([lng + dLng * Math.cos(a), lat + dLat * Math.sin(a)])
+  }
+  return coords
+}
+
+function distanceMeters(a: LngLat, b: LngLat): number {
+  const R = 6_371_000
+  const dLat = ((b[1] - a[1]) * Math.PI) / 180
+  const dLng = ((b[0] - a[0]) * Math.PI) / 180
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos((a[1] * Math.PI) / 180) * Math.cos((b[1] * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(s))
+}
+
+function formatDistance(m: number): string {
+  return m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`
+}
+
+function passengerElement(sameDirection: boolean): HTMLDivElement {
+  const el = document.createElement('div')
+  el.className = `waiting-client-marker${sameDirection ? '' : ' waiting-client-marker--other'}`
+  el.innerHTML =
+    '<div class="waiting-client-marker__pulse"></div><div class="waiting-client-marker__dot"><i class="ri-user-location-fill"></i></div>'
+  return el
+}
+
+function selfElement(): HTMLDivElement {
+  const el = document.createElement('div')
+  el.className = 'driver-self-marker'
+  el.innerHTML = '<i class="ri-bus-2-fill"></i>'
+  return el
+}
 
 export function DriverMap() {
-  const { user } = useAuth();
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const map = useRef<maplibregl.Map | null>(null);
-  const clientMarkersRef = useRef(new Map<string, maplibregl.Marker>());
+  const { me, shift, waiting, gps, wsState, parking: presence } = useDriverSession()
+  const containerRef = useRef<HTMLDivElement>(null)
+  const mapRef = useRef<maplibregl.Map | null>(null)
+  const passengerMarkers = useRef(new Map<string, maplibregl.Marker>())
+  const selfMarker = useRef<maplibregl.Marker | null>(null)
+  const fittedRef = useRef(false)
+  const [styleVersion, setStyleVersion] = useState(0)
+  const [mapError, setMapError] = useState<string | null>(null)
+  const [parkings, setParkings] = useState<DriverParking[]>([])
+  const [now, setNow] = useState(() => Date.now())
 
-  const [routeInfo, setRouteInfo] = useState<DriverRouteInfo | null>(null);
-  const [parkings, setParkings] = useState<ParkingStatus[]>([]);
-  const [mapReady, setMapReady] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  // Connect to realtime WebSocket
-  const wsState = useRealtime('/driver/events');
-
-  // Live waiting clients from WS
-  const waitingClients = useWaitingClients();
-
-  // Live parking statuses from WS
-  const liveParkings = useParkingStatus(parkings);
-
-  // ── Fetch route info & parkings on mount ──
   useEffect(() => {
-    if (!user?.route_id) return;
+    const t = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(t)
+  }, [])
 
-    apiClient
-      .get<DriverRouteInfo>(`/routes/${user.route_id}/driver-info`)
-      .then(setRouteInfo)
-      .catch(() => {
-        // Backend not available — use mock data in dev mode
-        if (import.meta.env.DEV) {
-          setRouteInfo(getMockRouteInfo());
-        }
-      });
-
-    apiClient
-      .get<ParkingStatus[]>(`/routes/${user.route_id}/parkings`)
-      .then(setParkings)
-      .catch(() => {
-        if (import.meta.env.DEV) {
-          setParkings(getMockParkings());
-        }
-      });
-  }, [user?.route_id]);
-
-  // ── In dev mode, load mocks immediately if no route_id ──
+  // ── Map lifecycle ──
   useEffect(() => {
-    if (import.meta.env.DEV && !user?.route_id) {
-      setRouteInfo(getMockRouteInfo());
-      setParkings(getMockParkings());
-    }
-  }, [user?.route_id]);
-
-  // ── Initialize MapLibre ──
-  useEffect(() => {
-    if (!mapContainer.current || map.current) return;
-
+    if (!containerRef.current || mapRef.current) return
+    let map: maplibregl.Map
     try {
-      const m = new maplibregl.Map({
-        container: mapContainer.current,
-        style: `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${MAPTILER_KEY}`,
-        center: DEFAULT_CENTER,
-        zoom: DEFAULT_ZOOM,
+      map = new maplibregl.Map({
+        container: containerRef.current,
+        style: getMapStyle('dark'),
+        center: ANDIJON_CENTER,
+        zoom: 13,
         attributionControl: false,
-      });
-
-      m.addControl(new maplibregl.NavigationControl(), 'top-right');
-      m.addControl(
-        new maplibregl.GeolocateControl({
-          positionOptions: { enableHighAccuracy: true },
-          trackUserLocation: true,
-        }),
-        'top-right'
-      );
-      m.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
-
-      m.on('load', () => {
-        setMapReady(true);
-      });
-
-      m.on('error', (e) => {
-        console.error('Map error:', e);
-        if (e.error?.message?.includes('403') || e.error?.message?.includes('401')) {
-          setLoadError('MapTiler kaliti noto\'g\'ri. VITE_MAPTILER_KEY ni .env ga qo\'shing.');
-        }
-      });
-
-      map.current = m;
+      })
     } catch (err) {
-      setLoadError('Xarita yuklanmadi');
-      console.error(err);
+      console.warn('Map initialization failed', err)
+      setMapError('Xarita bu qurilmada yuklanmadi (WebGL qo‘llab-quvvatlanmaydi).')
+      return
     }
-
+    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right')
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left')
+    attachStyleFallback(map, 'dark')
+    // Sources/layers must be (re)created after the first load and after any style switch
+    map.on('style.load', () => setStyleVersion((v) => v + 1))
+    mapRef.current = map
+    const markers = passengerMarkers.current
     return () => {
-      map.current?.remove();
-      map.current = null;
-    };
-  }, []);
-
-  // ── Draw route geometry ──
-  useEffect(() => {
-    if (!map.current || !mapReady || !routeInfo) return;
-    const m = map.current;
-
-    // Clean previous layers
-    routeInfo.directions.forEach((_, i) => {
-      const srcId = `route-direction-${i}`;
-      if (m.getLayer(srcId)) m.removeLayer(srcId);
-      if (m.getSource(srcId)) m.removeSource(srcId);
-    });
-
-    // Add each direction
-    const bounds = new maplibregl.LngLatBounds();
-
-    routeInfo.directions.forEach((dir, i) => {
-      const srcId = `route-direction-${i}`;
-      const isOutbound = dir.direction === 'outbound';
-
-      m.addSource(srcId, {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: { direction: dir.direction },
-          geometry: dir.geometry,
-        },
-      });
-
-      m.addLayer({
-        id: srcId,
-        type: 'line',
-        source: srcId,
-        paint: {
-          'line-color': isOutbound ? '#3b82f6' : '#22c55e',
-          'line-width': 4,
-          'line-opacity': 0.85,
-        },
-        layout: {
-          'line-cap': 'round',
-          'line-join': 'round',
-        },
-      });
-
-      // Extend bounds
-      dir.geometry.coordinates.forEach(([lng, lat]) => bounds.extend([lng, lat]));
-    });
-
-    // Fit map to route
-    if (!bounds.isEmpty()) {
-      m.fitBounds(bounds, { padding: 60, maxZoom: 15 });
+      markers.forEach((m) => m.remove())
+      markers.clear()
+      selfMarker.current?.remove()
+      selfMarker.current = null
+      map.remove()
+      mapRef.current = null
     }
-  }, [mapReady, routeInfo]);
+  }, [])
 
-  // ── Draw parking geofence circles ──
+  // ── Route geometry + stops ──
+  const route = me?.route ?? null
+  const activeDirection = shift?.direction ?? null
   useEffect(() => {
-    if (!map.current || !mapReady) return;
-    const m = map.current;
-
-    // Clean previous parking layers
-    liveParkings.forEach((_, i) => {
-      const srcId = `parking-${i}`;
-      const layerId = `parking-fill-${i}`;
-      const borderLayerId = `parking-border-${i}`;
-      if (m.getLayer(layerId)) m.removeLayer(layerId);
-      if (m.getLayer(borderLayerId)) m.removeLayer(borderLayerId);
-      if (m.getSource(srcId)) m.removeSource(srcId);
-    });
-
-    liveParkings.forEach((p, i) => {
-      const srcId = `parking-${i}`;
-      const circle = createCircleGeoJSON(p.lat, p.lng, p.radius_m);
-
-      m.addSource(srcId, { type: 'geojson', data: circle });
-
-      m.addLayer({
-        id: `parking-fill-${i}`,
-        type: 'fill',
-        source: srcId,
-        paint: {
-          'fill-color': p.is_driver_inside ? '#22c55e' : '#f59e0b',
-          'fill-opacity': 0.15,
-        },
-      });
-
-      m.addLayer({
-        id: `parking-border-${i}`,
+    const map = mapRef.current
+    if (!map || !styleVersion || !route) return
+    const lines = {
+      type: 'FeatureCollection' as const,
+      features: route.directions.map((d) => ({
+        type: 'Feature' as const,
+        properties: { direction: d.type, active: activeDirection === null || activeDirection === d.type ? 1 : 0 },
+        geometry: { type: 'LineString' as const, coordinates: d.geometry },
+      })),
+    }
+    const stops = {
+      type: 'FeatureCollection' as const,
+      features: route.directions
+        .filter((d) => activeDirection === null || d.type === activeDirection)
+        .flatMap((d) =>
+          d.stops.map((s) => ({
+            type: 'Feature' as const,
+            properties: { name: s.name, direction: d.type },
+            geometry: { type: 'Point' as const, coordinates: s.coordinates },
+          })),
+        ),
+    }
+    const lineSrc = map.getSource('driver-route') as maplibregl.GeoJSONSource | undefined
+    if (lineSrc) lineSrc.setData(lines)
+    else {
+      map.addSource('driver-route', { type: 'geojson', data: lines })
+      map.addLayer({
+        id: 'driver-route-line',
         type: 'line',
-        source: srcId,
+        source: 'driver-route',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': p.is_driver_inside ? '#22c55e' : '#f59e0b',
+          'line-color': ['match', ['get', 'direction'], 'inbound', ROUTE_COLORS.inbound, ROUTE_COLORS.outbound],
+          'line-width': ['case', ['==', ['get', 'active'], 1], 5, 3],
+          'line-opacity': ['case', ['==', ['get', 'active'], 1], 0.9, 0.35],
+        },
+      })
+    }
+    const stopSrc = map.getSource('driver-stops') as maplibregl.GeoJSONSource | undefined
+    if (stopSrc) stopSrc.setData(stops)
+    else {
+      map.addSource('driver-stops', { type: 'geojson', data: stops })
+      map.addLayer({
+        id: 'driver-stops-circle',
+        type: 'circle',
+        source: 'driver-stops',
+        paint: {
+          'circle-radius': 4,
+          'circle-color': '#ffffff',
+          'circle-stroke-width': 2,
+          'circle-stroke-color': ['match', ['get', 'direction'], 'inbound', ROUTE_COLORS.inbound, ROUTE_COLORS.outbound],
+        },
+      })
+    }
+    if (!fittedRef.current) {
+      const bounds = new maplibregl.LngLatBounds()
+      route.directions.forEach((d) => d.geometry.forEach((c) => bounds.extend(c)))
+      if (!bounds.isEmpty()) {
+        map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: 0 })
+        fittedRef.current = true
+      }
+    }
+  }, [styleVersion, route, activeDirection])
+
+  // ── Stoyankas (REST + live counts) ──
+  const loadParkings = useCallback(() => {
+    driverApi
+      .parkings()
+      .then(setParkings)
+      .catch(() => undefined)
+  }, [])
+  useEffect(() => {
+    loadParkings()
+    const t = setInterval(loadParkings, PARKING_REFRESH_MS)
+    return () => clearInterval(t)
+  }, [loadParkings])
+  useEffect(() => {
+    loadParkings()
+  }, [presence?.parkingId, presence?.isInside, loadParkings])
+  useChannel(publicChannel)
+  useChannelEvent<ParkingCountPayload>(publicChannel, 'parking.count.updated', (evt) => {
+    setParkings((list) => list.map((p) => (p.id === evt.payload.parking_id ? { ...p, vehicleCount: evt.payload.vehicle_count } : p)))
+  })
+
+  const parkingsView = useMemo(
+    () =>
+      parkings.map((p) => ({
+        ...p,
+        isDriverInside: presence ? presence.isInside && presence.parkingId === p.id : p.isDriverInside,
+      })),
+    [parkings, presence],
+  )
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !styleVersion) return
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: parkingsView.map((p) => ({
+        type: 'Feature' as const,
+        properties: { inside: p.isDriverInside ? 1 : 0, name: p.name },
+        geometry: { type: 'Polygon' as const, coordinates: [circlePolygon(p.lat, p.lng, p.radiusMeters)] },
+      })),
+    }
+    const src = map.getSource('driver-parkings') as maplibregl.GeoJSONSource | undefined
+    if (src) {
+      src.setData(data)
+      return
+    }
+    map.addSource('driver-parkings', { type: 'geojson', data })
+    const beforeId = map.getLayer('driver-route-line') ? 'driver-route-line' : undefined
+    map.addLayer(
+      {
+        id: 'driver-parkings-fill',
+        type: 'fill',
+        source: 'driver-parkings',
+        paint: { 'fill-color': ['case', ['==', ['get', 'inside'], 1], '#22c55e', '#f59e0b'], 'fill-opacity': 0.15 },
+      },
+      beforeId,
+    )
+    map.addLayer(
+      {
+        id: 'driver-parkings-line',
+        type: 'line',
+        source: 'driver-parkings',
+        paint: {
+          'line-color': ['case', ['==', ['get', 'inside'], 1], '#22c55e', '#f59e0b'],
           'line-width': 2,
           'line-dasharray': [3, 2],
-          'line-opacity': 0.6,
+          'line-opacity': 0.7,
         },
-      });
-    });
-  }, [mapReady, liveParkings]);
+      },
+      beforeId,
+    )
+  }, [styleVersion, parkingsView])
 
-  // ── Update waiting client markers ──
+  // ── Waiting passengers ──
   useEffect(() => {
-    if (!map.current || !mapReady) return;
-    const m = map.current;
-    const existingMarkers = clientMarkersRef.current;
-    const currentIds = new Set(waitingClients.map(c => c.session_id));
-
-    // Remove markers for clients that stopped watching
-    existingMarkers.forEach((marker, id) => {
-      if (!currentIds.has(id)) {
-        marker.remove();
-        existingMarkers.delete(id);
+    const map = mapRef.current
+    if (!map) return
+    const markers = passengerMarkers.current
+    const ids = new Set(waiting.map((p) => p.watchId))
+    markers.forEach((marker, id) => {
+      if (!ids.has(id)) {
+        marker.remove()
+        markers.delete(id)
       }
-    });
-
-    // Add or update markers
-    waitingClients.forEach((client) => {
-      const existing = existingMarkers.get(client.session_id);
+    })
+    waiting.forEach((p) => {
+      const existing = markers.get(p.watchId)
       if (existing) {
-        // Update position
-        existing.setLngLat([client.lng, client.lat]);
-      } else {
-        // Create new marker
-        const el = document.createElement('div');
-        el.className = 'waiting-client-marker';
-        el.innerHTML = `
-          <div class="waiting-client-marker__pulse"></div>
-          <div class="waiting-client-marker__dot">
-            <i class="ri-user-location-fill"></i>
-          </div>
-        `;
-
-        const marker = new maplibregl.Marker({ element: el })
-          .setLngLat([client.lng, client.lat])
-          .setPopup(
-            new maplibregl.Popup({ offset: 15, closeButton: false })
-              .setHTML(`<div class="client-popup">Kutayapman <span class="client-popup__time">${formatTime(client.timestamp)}</span></div>`)
-          )
-          .addTo(m);
-
-        existingMarkers.set(client.session_id, marker);
+        existing.setLngLat([p.lng, p.lat])
+        return
       }
-    });
-  }, [mapReady, waitingClients]);
+      const marker = new maplibregl.Marker({ element: passengerElement(!activeDirection || p.direction === activeDirection) })
+        .setLngLat([p.lng, p.lat])
+        .setPopup(new maplibregl.Popup({ offset: 16, closeButton: false }).setText(`Kutayapti · ${timeAgo(p.waitingSinceMs)}`))
+        .addTo(map)
+      markers.set(p.watchId, marker)
+    })
+  }, [waiting, activeDirection])
 
-  // ── Simulate mock clients in dev mode ──
+  // ── Own position ──
+  const fix = gps.lastFix
   useEffect(() => {
-    if (!import.meta.env.DEV || !mapReady) return;
+    const map = mapRef.current
+    if (!map) return
+    if (!fix || !shift) {
+      selfMarker.current?.remove()
+      selfMarker.current = null
+      return
+    }
+    if (!selfMarker.current) selfMarker.current = new maplibregl.Marker({ element: selfElement() }).setLngLat([fix.lng, fix.lat]).addTo(map)
+    else selfMarker.current.setLngLat([fix.lng, fix.lat])
+  }, [fix, shift])
 
-    // Inject a few mock waiting clients after a delay
-    const timer = setTimeout(() => {
-      const mockEvents = getMockWaitingClients();
-      mockEvents.forEach((client, i) => {
-        setTimeout(() => {
-          // Manually dispatch to simulate WS events
-          window.dispatchEvent(new CustomEvent('mock-client-watch', { detail: client }));
-        }, i * 800);
-      });
-    }, 2000);
+  const myPos: LngLat | null = fix && shift ? [fix.lng, fix.lat] : null
+  const nearest = useMemo(() => {
+    const list: (WaitingPassenger & { distance: number | null })[] = waiting.map((p) => ({
+      ...p,
+      distance: myPos ? distanceMeters(myPos, [p.lng, p.lat]) : null,
+    }))
+    return list.sort((a, b) => (a.distance ?? a.waitingSinceMs) - (b.distance ?? b.waitingSinceMs)).slice(0, 5)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waiting, fix?.lat, fix?.lng])
 
-    return () => clearTimeout(timer);
-  }, [mapReady]);
+  const focus = (lng: number, lat: number) => mapRef.current?.easeTo({ center: [lng, lat], zoom: 16, duration: 600 })
 
   return (
     <div className="driver-map-page">
-      {/* Connection status bar */}
       <div className={`map-status-bar map-status-bar--${wsState}`}>
         <div className="map-status-bar__indicator" />
         <span>
           {wsState === 'connected' && 'Real-time ulangan'}
-          {wsState === 'connecting' && 'Ulanmoqda...'}
-          {wsState === 'reconnecting' && 'Qayta ulanmoqda...'}
-          {wsState === 'disconnected' && 'Uzilgan'}
+          {wsState === 'connecting' && 'Ulanmoqda…'}
+          {wsState === 'reconnecting' && 'Qayta ulanmoqda…'}
+          {wsState === 'disconnected' && 'Aloqa uzilgan'}
         </span>
-        {waitingClients.length > 0 && (
+        {shift && (
           <span className="map-status-bar__badge">
-            <i className="ri-user-location-fill" /> {waitingClients.length} kutmoqda
+            <i className="ri-user-location-fill" /> {waiting.length} kutmoqda
           </span>
         )}
       </div>
 
-      {/* Map container */}
-      <div className="driver-map-container" ref={mapContainer}>
-        {loadError && (
+      <div className="driver-map-container" ref={containerRef}>
+        {mapError && (
           <div className="map-error-overlay">
             <i className="ri-error-warning-line" />
-            <p>{loadError}</p>
+            <p>{mapError}</p>
           </div>
         )}
       </div>
 
-      {/* Route info pill */}
-      {routeInfo && (
+      {route && (
         <div className="map-route-pill">
           <i className="ri-route-line" />
-          <span className="map-route-pill__number">{routeInfo.route_number}</span>
-          <span className="map-route-pill__name">{routeInfo.route_name}</span>
+          <span className="map-route-pill__number">{route.routeNumber}</span>
+          <span className="map-route-pill__name">{route.name}</span>
         </div>
       )}
 
-      {/* Parking status cards */}
-      {liveParkings.length > 0 && (
-        <div className="map-parking-panel">
-          {liveParkings.map((p) => (
-            <div
-              key={p.parking_id}
-              className={`map-parking-card ${p.is_driver_inside ? 'map-parking-card--inside' : ''}`}
-            >
-              <div className="map-parking-card__icon">
-                <i className={p.is_driver_inside ? 'ri-parking-box-fill' : 'ri-parking-box-line'} />
-              </div>
-              <div className="map-parking-card__info">
-                <span className="map-parking-card__name">{p.name}</span>
-                <span className="map-parking-card__count">
-                  {p.vehicle_count} transport
-                  {p.is_driver_inside && (
-                    <span className="map-parking-card__inside-badge">Stoyanka hududida</span>
-                  )}
-                </span>
-              </div>
-            </div>
-          ))}
+      {myPos && (
+        <button className="map-locate-btn" onClick={() => focus(myPos[0], myPos[1])} aria-label="Mening joylashuvim">
+          <i className="ri-focus-3-line" />
+        </button>
+      )}
+
+      {!shift && (
+        <div className="map-shift-hint">
+          <i className="ri-information-line" />
+          <span>
+            Smena faol emas. Kutayotgan yo‘lovchilar faqat smena davomida ko‘rinadi.{' '}
+            <Link to="/driver">Smenani boshlash</Link>
+          </span>
         </div>
       )}
 
-      {/* Legend */}
+      <div className="map-bottom-panels">
+        {shift && nearest.length > 0 && (
+          <div className="map-waiting-list">
+            {nearest.map((p) => (
+              <button key={p.watchId} className="map-waiting-item" onClick={() => focus(p.lng, p.lat)}>
+                <i className="ri-user-location-fill" />
+                <span>{p.distance !== null ? formatDistance(p.distance) : 'Masofa noma’lum'}</span>
+                <small>
+                  {timeAgo(p.waitingSinceMs, now)}
+                  {activeDirection && p.direction !== activeDirection ? ' · qarama-qarshi yo‘nalish' : ''}
+                </small>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {parkingsView.length > 0 && (
+          <div className="map-parking-panel">
+            {parkingsView.map((p) => (
+              <button
+                key={p.id}
+                className={`map-parking-card ${p.isDriverInside ? 'map-parking-card--inside' : ''}`}
+                onClick={() => focus(p.lng, p.lat)}
+              >
+                <div className="map-parking-card__icon">
+                  <i className={p.isDriverInside ? 'ri-parking-box-fill' : 'ri-parking-box-line'} />
+                </div>
+                <div className="map-parking-card__info">
+                  <span className="map-parking-card__name">{p.name}</span>
+                  <span className="map-parking-card__count">
+                    {p.vehicleCount} transport
+                    {p.isDriverInside && <span className="map-parking-card__inside-badge">Siz shu yerdasiz</span>}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="map-legend">
         <div className="map-legend__item">
-          <span className="map-legend__color" style={{ background: '#3b82f6' }} />
+          <span className="map-legend__color" style={{ background: ROUTE_COLORS.outbound }} />
           <span>Borish</span>
         </div>
         <div className="map-legend__item">
-          <span className="map-legend__color" style={{ background: '#22c55e' }} />
+          <span className="map-legend__color" style={{ background: ROUTE_COLORS.inbound }} />
           <span>Qaytish</span>
         </div>
         <div className="map-legend__item">
@@ -364,116 +414,5 @@ export function DriverMap() {
         </div>
       </div>
     </div>
-  );
-}
-
-// ── Helper: create circle GeoJSON from center + radius ──
-function createCircleGeoJSON(lat: number, lng: number, radiusM: number) {
-  const points = 64;
-  const coords: [number, number][] = [];
-  const km = radiusM / 1000;
-
-  for (let i = 0; i <= points; i++) {
-    const angle = (i / points) * 2 * Math.PI;
-    const dx = km * Math.cos(angle);
-    const dy = km * Math.sin(angle);
-    const dlat = dy / 110.574;
-    const dlng = dx / (111.320 * Math.cos((lat * Math.PI) / 180));
-    coords.push([lng + dlng, lat + dlat]);
-  }
-
-  return {
-    type: 'Feature' as const,
-    properties: {},
-    geometry: {
-      type: 'Polygon' as const,
-      coordinates: [coords],
-    },
-  };
-}
-
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return d.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
-}
-
-// ── Mock data for dev mode ──
-function getMockRouteInfo(): DriverRouteInfo {
-  return {
-    route_id: 'mock-route-1',
-    route_number: '14',
-    route_name: 'Navbahor — Yangi bozor',
-    directions: [
-      {
-        id: 'dir-out',
-        route_id: 'mock-route-1',
-        direction: 'outbound',
-        start_name: 'Navbahor',
-        end_name: 'Yangi bozor',
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            [72.330, 40.790],
-            [72.335, 40.788],
-            [72.340, 40.785],
-            [72.345, 40.783],
-            [72.350, 40.780],
-            [72.355, 40.778],
-            [72.360, 40.776],
-          ],
-        },
-      },
-      {
-        id: 'dir-in',
-        route_id: 'mock-route-1',
-        direction: 'inbound',
-        start_name: 'Yangi bozor',
-        end_name: 'Navbahor',
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            [72.360, 40.776],
-            [72.356, 40.774],
-            [72.351, 40.775],
-            [72.346, 40.778],
-            [72.341, 40.781],
-            [72.336, 40.784],
-            [72.331, 40.787],
-            [72.330, 40.790],
-          ],
-        },
-      },
-    ],
-  };
-}
-
-function getMockParkings(): ParkingStatus[] {
-  return [
-    {
-      parking_id: 'park-1',
-      name: 'Navbahor stoyankasi',
-      lat: 40.790,
-      lng: 72.330,
-      radius_m: 150,
-      vehicle_count: 3,
-      is_driver_inside: false,
-    },
-    {
-      parking_id: 'park-2',
-      name: 'Yangi bozor stoyankasi',
-      lat: 40.776,
-      lng: 72.360,
-      radius_m: 200,
-      vehicle_count: 5,
-      is_driver_inside: false,
-    },
-  ];
-}
-
-function getMockWaitingClients(): WaitingClient[] {
-  return [
-    { session_id: 'mock-c1', lat: 40.786, lng: 72.338, timestamp: Date.now() },
-    { session_id: 'mock-c2', lat: 40.782, lng: 72.347, timestamp: Date.now() - 60000 },
-    { session_id: 'mock-c3', lat: 40.778, lng: 72.354, timestamp: Date.now() - 120000 },
-  ];
+  )
 }

@@ -12,3 +12,19 @@ backend/app.db
 .DS_Store
 .pytest_cache/
 .venv/
+backend/fcm-service-account*.json
+backend/app.db-*
+*.db-wal
+*.db-shm
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+
+# Flutter build output (mobile/.gitignore also covers these)
+mobile/build/
+mobile/.dart_tool/
+mobile/.flutter-plugins*
+*.apk
+*.aab
+*.ipa

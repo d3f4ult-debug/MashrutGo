@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import 'screens/webview_screen.dart';
 import 'services/fcm_service.dart';
 
 final GlobalKey<WebViewScreenState> webViewKey = GlobalKey<WebViewScreenState>();
 
-void main() async {
+/// Notification tapped before the WebView existed (cold start) — opened once it is ready.
+String? _pendingRoute;
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Dark immersive status bar styling
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -18,11 +21,14 @@ void main() async {
     ),
   );
 
-  // Initialize FCM and hook up notification tap deep-linking
   await FcmService().initialize(
     onDeepLink: (route) {
-      debugPrint('[Main] Deep link received: $route');
-      webViewKey.currentState?.navigateToRoute(route);
+      final state = webViewKey.currentState;
+      if (state != null) {
+        state.navigateToRoute(route);
+      } else {
+        _pendingRoute = route;
+      }
     },
   );
 
@@ -40,15 +46,14 @@ class MashrutGoApp extends StatelessWidget {
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF0F111A),
-        colorScheme: ColorScheme.dark(
-          primary: const Color(0xFF3B82F6),
-          secondary: const Color(0xFFA855F7),
-          surface: const Color(0xFF181B26),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF3B82F6),
+          secondary: Color(0xFFA855F7),
+          surface: Color(0xFF181B26),
         ),
-        fontFamily: 'Inter',
         useMaterial3: true,
       ),
-      home: WebViewScreen(key: webViewKey),
+      home: WebViewScreen(key: webViewKey, initialRoute: _pendingRoute),
     );
   }
 }

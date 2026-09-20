@@ -1,453 +1,544 @@
-import { useState, useEffect } from 'react';
-import { adminApi } from '../../services/api/adminApi';
-import type { AdminClientUser } from '../../types/admin';
-import './AdminOperations.css';
-import '../uyushma/UyushmaOperations.css';
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { adminApi, WALLET_ADJUST_LIMIT_UZS } from '../../services/api/adminApi'
+import { errorMessage, newIdempotencyKey } from '../../services/api/client'
+import { formatDate, formatDateTime, formatSom, timeAgo } from '../../utils/format'
+import type { AdminClientUser, Paginated, WalletLedgerEntry } from '../../types/admin'
+import {
+  AdminModal,
+  Alert,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  Pagination,
+  Toast,
+  isAbortError,
+  useDebounced,
+  useToast,
+} from './adminShared'
+import './AdminOperations.css'
+import '../uyushma/UyushmaOperations.css'
+
+const PAGE_SIZE = 25
+
+type AdjustDirection = 'credit' | 'debit'
+type AdjustStep = 'form' | 'confirm' | 'done'
+
+function parseAmount(text: string): number {
+  const digits = text.replace(/[^\d]/g, '')
+  return digits ? Number(digits) : 0
+}
 
 export function AdminClients() {
-  const [clients, setClients] = useState<AdminClientUser[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'blocked'>('all');
-  const [isLoading, setIsLoading] = useState(true);
+  const { toast, show: showToast, hide: hideToast } = useToast()
 
-  // Block / Unblock Modal State
-  const [selectedClient, setSelectedClient] = useState<AdminClientUser | null>(null);
-  const [blockReason, setBlockReason] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [modalError, setModalError] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState('')
+  const search = useDebounced(searchInput.trim(), 400)
+  const [pageState, setPageState] = useState({ search: '', page: 1 })
+  const page = pageState.search === search ? pageState.page : 1
 
-  // Toast feedback
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [data, setData] = useState<Paginated<AdminClientUser> | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
-  const loadData = async () => {
-    setIsLoading(true);
+  // Block / unblock
+  const [blockTarget, setBlockTarget] = useState<AdminClientUser | null>(null)
+  const [blockReason, setBlockReason] = useState('')
+  const [blockError, setBlockError] = useState<string | null>(null)
+  const [isBlocking, setIsBlocking] = useState(false)
+
+  // Wallet adjustment
+  const [adjustTarget, setAdjustTarget] = useState<AdminClientUser | null>(null)
+  const [adjustStep, setAdjustStep] = useState<AdjustStep>('form')
+  const [adjustDirection, setAdjustDirection] = useState<AdjustDirection>('credit')
+  const [adjustAmountText, setAdjustAmountText] = useState('')
+  const [adjustReason, setAdjustReason] = useState('')
+  const [adjustChecked, setAdjustChecked] = useState(false)
+  const [adjustError, setAdjustError] = useState<string | null>(null)
+  const [isAdjusting, setIsAdjusting] = useState(false)
+  const [adjustResult, setAdjustResult] = useState<WalletLedgerEntry | null>(null)
+  // One key per confirmed correction: a retry after a network error cannot post it twice
+  const [adjustKey, setAdjustKey] = useState('')
+
+  const load = useCallback(async (searchTerm: string, pageNo: number) => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setIsLoading(true)
+    setLoadError(null)
     try {
-      const data = await adminApi.getClients();
-      setClients(data);
-    } catch {
-      // Fallback handled in adminApi
+      const result = await adminApi.getClients({ search: searchTerm, page: pageNo, size: PAGE_SIZE }, controller.signal)
+      if (controller.signal.aborted) return
+      setData(result)
+    } catch (err) {
+      if (isAbortError(err) || controller.signal.aborted) return
+      setLoadError(errorMessage(err, 'Mijozlar ro‘yxatini yuklab bo‘lmadi'))
     } finally {
-      setIsLoading(false);
+      if (!controller.signal.aborted) setIsLoading(false)
     }
-  };
+  }, [])
 
   useEffect(() => {
-    loadData();
-  }, []);
+    load(search, page)
+  }, [load, search, page])
 
-  const openToggleBlockModal = (client: AdminClientUser) => {
-    setSelectedClient(client);
-    setBlockReason('');
-    setModalError(null);
-  };
+  useEffect(() => () => abortRef.current?.abort(), [])
 
-  const handleConfirmToggleBlock = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedClient) return;
+  const reload = () => load(search, page)
+  const goToPage = (p: number) => setPageState({ search, page: p })
 
-    const isBlocking = !selectedClient.is_blocked;
-    if (isBlocking && !blockReason.trim()) {
-      setModalError("Mijozni bloklash uchun sabab ko'rsatish majburiy!");
-      return;
-    }
+  const replaceClient = (updated: AdminClientUser) =>
+    setData((prev) => (prev ? { ...prev, items: prev.items.map((c) => (c.id === updated.id ? updated : c)) } : prev))
 
-    setIsSubmitting(true);
+  // ── Block / unblock ──
+  const openBlock = (c: AdminClientUser) => {
+    setBlockTarget(c)
+    setBlockReason('')
+    setBlockError(null)
+  }
+
+  const handleBlock = async () => {
+    if (!blockTarget) return
+    const blocking = !blockTarget.is_blocked
+    setBlockError(null)
+    setIsBlocking(true)
     try {
-      const updated = await adminApi.toggleClientBlock(
-        selectedClient.id,
-        isBlocking,
-        blockReason.trim() || undefined
-      );
-
-      setClients(prev => prev.map(c => (c.id === updated.id ? updated : c)));
-      setToastMessage(
-        isBlocking
-          ? `${selectedClient.phone} muvaffaqiyatli bloklandi.`
-          : `${selectedClient.phone} blokdan chiqarildi.`
-      );
-      setSelectedClient(null);
-    } catch (err: any) {
-      setModalError(err?.message || "Amalni bajarishda xatolik yuz berdi");
+      const updated = await adminApi.setClientBlocked(blockTarget.id, blocking, blockReason)
+      replaceClient(updated)
+      showToast(blocking ? `${updated.phone} bloklandi.` : `${updated.phone} blokdan chiqarildi.`)
+      setBlockTarget(null)
+    } catch (err) {
+      setBlockError(errorMessage(err, 'Amalni bajarib bo‘lmadi'))
     } finally {
-      setIsSubmitting(false);
+      setIsBlocking(false)
     }
-  };
+  }
 
-  const filteredClients = clients.filter(client => {
-    const matchesSearch =
-      (client.full_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      client.phone.toLowerCase().includes(searchQuery.toLowerCase());
+  // ── Wallet adjustment ──
+  const openAdjust = (c: AdminClientUser) => {
+    setAdjustTarget(c)
+    setAdjustStep('form')
+    setAdjustDirection('credit')
+    setAdjustAmountText('')
+    setAdjustReason('')
+    setAdjustChecked(false)
+    setAdjustError(null)
+    setAdjustResult(null)
+  }
 
-    const matchesStatus =
-      statusFilter === 'all'
-        ? true
-        : statusFilter === 'active'
-        ? !client.is_blocked
-        : client.is_blocked;
+  const closeAdjust = () => {
+    if (isAdjusting) return
+    setAdjustTarget(null)
+  }
 
-    return matchesSearch && matchesStatus;
-  });
+  const adjustAmount = parseAmount(adjustAmountText)
+  const signedAmount = adjustDirection === 'credit' ? adjustAmount : -adjustAmount
+  const expectedBalance = adjustTarget ? adjustTarget.wallet_balance + signedAmount : 0
 
-  const totalBalance = clients.reduce((sum, c) => sum + c.wallet_balance, 0);
+  const adjustFormError = (): string | null => {
+    if (!adjustTarget) return null
+    if (adjustAmount <= 0) return 'Summani kiriting'
+    if (adjustAmount > WALLET_ADJUST_LIMIT_UZS) return `Bir martalik tuzatish ${formatSom(WALLET_ADJUST_LIMIT_UZS)}dan oshmasligi kerak`
+    if (adjustDirection === 'debit' && adjustAmount > adjustTarget.wallet_balance) {
+      return `Yechiladigan summa joriy balansdan (${formatSom(adjustTarget.wallet_balance)}) katta — balans manfiy bo‘lib qoladi`
+    }
+    const r = adjustReason.trim().length
+    if (r < 3) return 'Sabab kamida 3 ta belgidan iborat bo‘lishi kerak'
+    if (r > 255) return 'Sabab 255 ta belgidan oshmasligi kerak'
+    return null
+  }
+
+  const handleAdjustContinue = () => {
+    const err = adjustFormError()
+    if (err) {
+      setAdjustError(err)
+      return
+    }
+    setAdjustError(null)
+    setAdjustChecked(false)
+    setAdjustKey(newIdempotencyKey())
+    setAdjustStep('confirm')
+  }
+
+  const handleAdjustSubmit = async () => {
+    if (!adjustTarget || isAdjusting) return
+    setAdjustError(null)
+    setIsAdjusting(true)
+    try {
+      const entry = await adminApi.adjustWallet(adjustTarget.id, signedAmount, adjustReason, adjustKey)
+      setAdjustResult(entry)
+      setAdjustStep('done')
+      replaceClient({ ...adjustTarget, wallet_balance: entry.balance_after_uzs })
+      showToast(`Hamyon tuzatildi: ${signedAmount > 0 ? '+' : '−'}${formatSom(Math.abs(entry.amount_uzs))}`)
+    } catch (err) {
+      setAdjustError(errorMessage(err, 'Tuzatishni amalga oshirib bo‘lmadi'))
+    } finally {
+      setIsAdjusting(false)
+    }
+  }
+
+  const items = data?.items ?? []
 
   return (
     <div className="admin-page-container">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div
-          style={{
-            position: 'fixed',
-            top: '1.5rem',
-            right: '1.5rem',
-            zIndex: 9999,
-            background: 'var(--surface-elevated)',
-            border: '1px solid var(--admin-accent)',
-            color: 'var(--text-primary)',
-            padding: '0.85rem 1.25rem',
-            borderRadius: 'var(--radius-lg)',
-            boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.75rem',
-          }}
-        >
-          <i className="ri-checkbox-circle-fill" style={{ color: 'var(--admin-accent)', fontSize: '1.25rem' }} />
-          <span>{toastMessage}</span>
-          <button
-            onClick={() => setToastMessage(null)}
-            style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', marginLeft: '0.5rem' }}
-          >
-            <i className="ri-close-line" />
-          </button>
-        </div>
-      )}
+      <Toast toast={toast} onClose={hideToast} />
 
-      {/* Page Header */}
       <div className="admin-page-header">
         <div className="admin-page-header__left">
           <h1>
             <i className="ri-user-heart-line" style={{ color: 'var(--admin-accent)' }} />
-            Mijozlar Boshqaruvi
+            Mijozlar va hamyonlar
           </h1>
-          <p>Tizimda ro'yxatdan o'tgan barcha yo'lovchilar, hamyon balanslari va xavfsizlik nazorati</p>
+          <p>Ro‘yxatdan o‘tgan yo‘lovchilar, hamyon balanslari, bloklash va audit qilinadigan balans tuzatishlari</p>
+        </div>
+        <div className="uyushma-page-header__actions">
+          <button type="button" className="btn-secondary-action" onClick={reload} disabled={isLoading}>
+            <i className={isLoading ? 'ri-loader-4-line admin-spin' : 'ri-refresh-line'} />
+            Yangilash
+          </button>
         </div>
       </div>
 
-      {/* Quick Summary Cards */}
-      <div className="admin-kpis-grid">
-        <div className="admin-kpi-card">
-          <div className="admin-kpi-card__icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}>
-            <i className="ri-group-line" />
-          </div>
-          <div className="admin-kpi-card__content">
-            <span className="admin-kpi-card__value">{clients.length}</span>
-            <span className="admin-kpi-card__label">Jami Ro'yxatdan O'tgan</span>
-          </div>
-        </div>
-
-        <div className="admin-kpi-card">
-          <div className="admin-kpi-card__icon" style={{ background: 'var(--success-subtle)', color: 'var(--success)' }}>
-            <i className="ri-user-follow-line" />
-          </div>
-          <div className="admin-kpi-card__content">
-            <span className="admin-kpi-card__value">{clients.filter(c => !c.is_blocked).length}</span>
-            <span className="admin-kpi-card__label">Faol Mijozlar</span>
-          </div>
-        </div>
-
-        <div className="admin-kpi-card">
-          <div className="admin-kpi-card__icon" style={{ background: 'var(--danger-subtle)', color: 'var(--danger)' }}>
-            <i className="ri-user-forbid-line" />
-          </div>
-          <div className="admin-kpi-card__content">
-            <span className="admin-kpi-card__value">{clients.filter(c => c.is_blocked).length}</span>
-            <span className="admin-kpi-card__label">Bloklanganlar</span>
-          </div>
-        </div>
-
-        <div className="admin-kpi-card">
-          <div className="admin-kpi-card__icon" style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6' }}>
-            <i className="ri-wallet-3-line" />
-          </div>
-          <div className="admin-kpi-card__content">
-            <span className="admin-kpi-card__value">{totalBalance.toLocaleString()} UZS</span>
-            <span className="admin-kpi-card__label">Jami Hamyon Mablag'i</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Filters Bar */}
-      <div className="operations-filter-bar">
-        <div className="operations-filter-bar__search">
-          <i className="ri-search-line" />
+      <div className="uyushma-toolbar">
+        <div className="uyushma-search-input">
+          <i className={isLoading && data ? 'ri-loader-4-line admin-spin' : 'ri-search-line'} />
           <input
-            type="text"
-            placeholder="Telefon raqami yoki F.I.O. bo'yicha qidiruv..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
+            type="search"
+            placeholder="Telefon raqami yoki F.I.Sh. bo‘yicha qidirish..."
+            value={searchInput}
+            maxLength={50}
+            onChange={(e) => setSearchInput(e.target.value)}
+            aria-label="Mijoz qidirish"
           />
         </div>
-
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button
-            className={`finance-tab ${statusFilter === 'all' ? 'active' : ''}`}
-            onClick={() => setStatusFilter('all')}
-          >
-            Hammasi ({clients.length})
-          </button>
-          <button
-            className={`finance-tab ${statusFilter === 'active' ? 'active' : ''}`}
-            onClick={() => setStatusFilter('active')}
-          >
-            Faol ({clients.filter(c => !c.is_blocked).length})
-          </button>
-          <button
-            className={`finance-tab ${statusFilter === 'blocked' ? 'active' : ''}`}
-            onClick={() => setStatusFilter('blocked')}
-          >
-            Bloklangan ({clients.filter(c => c.is_blocked).length})
-          </button>
-        </div>
-      </div>
-
-      {/* Clients Table */}
-      <div className="operations-table-card">
-        {isLoading ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-            <i className="ri-loader-4-line ri-spin" style={{ fontSize: '2rem', color: 'var(--admin-accent)' }} />
-            <p style={{ marginTop: '0.5rem' }}>Mijozlar ro'yxati yuklanmoqda...</p>
-          </div>
-        ) : filteredClients.length === 0 ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
-            <i className="ri-user-search-line" style={{ fontSize: '2.5rem', opacity: 0.5 }} />
-            <p style={{ marginTop: '0.5rem' }}>Hech qanday mijoz topilmadi</p>
-          </div>
-        ) : (
-          <div className="operations-table-wrap">
-            <table className="operations-table">
-              <thead>
-                <tr>
-                  <th>Mijoz (Telefon / F.I.O.)</th>
-                  <th>Hamyon Balansi</th>
-                  <th>Jami Qatnovlar</th>
-                  <th>Holat</th>
-                  <th>So'nggi Faollik</th>
-                  <th style={{ textAlign: 'right' }}>Amallar</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredClients.map(client => (
-                  <tr key={client.id} style={{ background: client.is_blocked ? 'rgba(239, 68, 68, 0.04)' : undefined }}>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div
-                          style={{
-                            width: 36,
-                            height: 36,
-                            borderRadius: '50%',
-                            background: client.is_blocked ? 'var(--danger-subtle)' : 'var(--admin-accent-subtle)',
-                            color: client.is_blocked ? 'var(--danger)' : 'var(--admin-accent)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontWeight: 700,
-                            fontSize: '0.9rem',
-                          }}
-                        >
-                          {client.full_name ? client.full_name.charAt(0).toUpperCase() : 'U'}
-                        </div>
-                        <div>
-                          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                            {client.full_name || 'Ismi kiritilmagan'}
-                          </div>
-                          <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                            {client.phone}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
-                        {client.wallet_balance.toLocaleString()} UZS
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: 'var(--text-secondary)' }}>
-                        <i className="ri-route-line" />
-                        {client.total_rides} ta
-                      </span>
-                    </td>
-                    <td>
-                      {client.is_blocked ? (
-                        <div>
-                          <span className="status-badge" style={{ background: 'var(--danger-subtle)', color: 'var(--danger)' }}>
-                            <i className="ri-forbid-line" /> Bloklangan
-                          </span>
-                          {client.block_reason && (
-                            <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '0.2rem', maxWidth: 220 }}>
-                              {client.block_reason}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="status-badge" style={{ background: 'var(--success-subtle)', color: 'var(--success)' }}>
-                          <i className="ri-checkbox-circle-line" /> Faol
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                      {new Date(client.last_active_at).toLocaleString('uz-UZ', {
-                        day: '2-digit',
-                        month: 'short',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <button
-                        onClick={() => openToggleBlockModal(client)}
-                        style={{
-                          background: client.is_blocked ? 'var(--success-subtle)' : 'var(--danger-subtle)',
-                          color: client.is_blocked ? 'var(--success)' : 'var(--danger)',
-                          border: `1px solid ${client.is_blocked ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
-                          padding: '0.4rem 0.8rem',
-                          borderRadius: 'var(--radius-md)',
-                          fontSize: '0.775rem',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '0.3rem',
-                        }}
-                      >
-                        <i className={client.is_blocked ? 'ri-lock-unlock-line' : 'ri-user-forbid-line'} />
-                        {client.is_blocked ? 'Blokdan chiqarish' : 'Bloklash'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {data && (
+          <div className="admin-counter">
+            {search ? 'Topildi' : 'Jami mijozlar'}: <strong>{data.total.toLocaleString('ru-RU')}</strong>
           </div>
         )}
       </div>
 
-      {/* Block / Unblock Modal */}
-      {selectedClient && (
-        <div className="operations-modal-backdrop">
-          <div className="operations-modal" style={{ maxWidth: 500 }}>
-            <div className="operations-modal__header">
-              <h2>
-                <i
-                  className={selectedClient.is_blocked ? 'ri-lock-unlock-line' : 'ri-user-forbid-line'}
-                  style={{ color: selectedClient.is_blocked ? 'var(--success)' : 'var(--danger)' }}
-                />
-                {selectedClient.is_blocked ? "Mijozni blokdan chiqarish" : "Mijoz akkauntini bloklash"}
-              </h2>
-              <button className="modal-close-btn" onClick={() => setSelectedClient(null)}>
-                <i className="ri-close-line" />
-              </button>
+      {loadError && data && <Alert>Ro‘yxatni yangilab bo‘lmadi: {loadError}</Alert>}
+
+      <div className="admin-panel">
+        {!data && isLoading ? (
+          <LoadingState label="Mijozlar yuklanmoqda..." />
+        ) : !data ? (
+          <ErrorState message={loadError ?? 'Mijozlar ro‘yxatini yuklab bo‘lmadi'} onRetry={reload} />
+        ) : items.length === 0 ? (
+          <EmptyState
+            icon="ri-user-search-line"
+            title={search ? `“${search}” bo‘yicha mijoz topilmadi` : 'Hali ro‘yxatdan o‘tgan mijoz yo‘q'}
+          />
+        ) : (
+          <>
+            <div className="uyushma-table-wrapper">
+              <table className="uyushma-table">
+                <thead>
+                  <tr>
+                    <th>Mijoz</th>
+                    <th>Hamyon balansi</th>
+                    <th>Qatnovlar</th>
+                    <th>Holat</th>
+                    <th>So‘nggi faollik</th>
+                    <th>Ro‘yxatdan o‘tgan</th>
+                    <th style={{ textAlign: 'right' }}>Amallar</th>
+                  </tr>
+                </thead>
+                <tbody style={{ opacity: isLoading ? 0.6 : 1 }}>
+                  {items.map((c) => (
+                    <tr key={c.id} style={c.is_blocked ? { background: 'rgba(239, 68, 68, 0.04)' } : undefined}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{c.full_name || 'Ismi kiritilmagan'}</div>
+                        <div className="admin-muted">
+                          {c.phone} • ID {c.id}
+                        </div>
+                      </td>
+                      <td style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{formatSom(c.wallet_balance)}</td>
+                      <td className="admin-muted">{c.total_rides.toLocaleString('ru-RU')} ta</td>
+                      <td>
+                        {c.is_blocked ? (
+                          <div>
+                            <span className="status-pill danger">
+                              <i className="ri-forbid-line" /> Bloklangan
+                            </span>
+                            {c.block_reason && (
+                              <div className="admin-muted" style={{ maxWidth: 220, marginTop: '0.2rem' }} title={c.block_reason}>
+                                {c.block_reason}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="status-pill active">
+                            <i className="ri-checkbox-circle-line" /> Faol
+                          </span>
+                        )}
+                      </td>
+                      <td className="admin-muted" title={c.last_active_at ? formatDateTime(c.last_active_at) : undefined}>
+                        {c.last_active_at ? timeAgo(c.last_active_at) : 'Ma’lumot yo‘q'}
+                      </td>
+                      <td className="admin-muted">{formatDate(c.created_at)}</td>
+                      <td>
+                        <div className="table-actions" style={{ justifyContent: 'flex-end' }}>
+                          <button type="button" className="btn-admin-chip accent" onClick={() => openAdjust(c)}>
+                            <i className="ri-scales-3-line" /> Balansni tuzatish
+                          </button>
+                          <button
+                            type="button"
+                            className={`btn-admin-chip ${c.is_blocked ? 'success' : 'danger'}`}
+                            onClick={() => openBlock(c)}
+                          >
+                            <i className={c.is_blocked ? 'ri-lock-unlock-line' : 'ri-user-forbid-line'} />
+                            {c.is_blocked ? 'Blokdan chiqarish' : 'Bloklash'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+            <Pagination page={data.page} pages={data.pages} total={data.total} size={data.size} disabled={isLoading} onPage={goToPage} />
+          </>
+        )}
+      </div>
 
-            <form onSubmit={handleConfirmToggleBlock}>
-              <div className="operations-modal__body">
-                {modalError && (
-                  <div className="form-error-banner">
-                    <i className="ri-error-warning-line" />
-                    <span>{modalError}</span>
-                  </div>
-                )}
-
-                <div className="dangerous-action-banner" style={{ background: selectedClient.is_blocked ? 'rgba(34, 197, 94, 0.1)' : undefined, borderColor: selectedClient.is_blocked ? 'var(--success)' : undefined, color: selectedClient.is_blocked ? '#86efac' : undefined }}>
-                  <i
-                    className={selectedClient.is_blocked ? 'ri-information-line' : 'ri-alarm-warning-line'}
-                    style={{ color: selectedClient.is_blocked ? 'var(--success)' : 'var(--danger)' }}
-                  />
-                  <div>
-                    {selectedClient.is_blocked ? (
-                      <span>Ushbu mijoz qayta faollashtiriladi va unga mobil ilovadan foydalanish, qatnovlarni bron qilish va to'lov qilish imkoniyati qaytariladi.</span>
-                    ) : (
-                      <span><strong>Diqqat:</strong> Akkaunt bloklangandan so'ng mijoz ilovaga kira olmaydi, uning aktiv qatnovlari bekor qilinadi. Ushbu amal ma'murlar audit jurnalida qayd etiladi.</span>
-                    )}
-                  </div>
-                </div>
-
-                <div style={{ marginTop: '1rem', background: 'var(--surface-sunken)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {selectedClient.full_name || 'Noma\'lum mijoz'}
-                  </div>
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
-                    Tel: {selectedClient.phone} | Balans: {selectedClient.wallet_balance.toLocaleString()} UZS
-                  </div>
-                </div>
-
-                {!selectedClient.is_blocked && (
-                  <div className="form-group" style={{ marginTop: '1rem' }}>
-                    <label>
-                      Bloklash sababi (Audit jurnaliga yoziladi) <span style={{ color: 'var(--danger)' }}>*</span>
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={blockReason}
-                      onChange={e => setBlockReason(e.target.value)}
-                      placeholder="Masalan: To'lov tizimida shubhali faollik yoki takroriy noto'g'ri so'rovlar..."
-                      required
-                      style={{
-                        width: '100%',
-                        background: 'var(--surface-sunken)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-md)',
-                        padding: '0.65rem',
-                        color: 'var(--text-primary)',
-                        fontSize: '0.85rem',
-                        resize: 'vertical',
-                      }}
-                    />
-                  </div>
-                )}
+      {/* Block / unblock confirmation */}
+      {blockTarget && (
+        <AdminModal
+          title={blockTarget.is_blocked ? 'Mijozni blokdan chiqarish' : 'Mijozni bloklash'}
+          icon={blockTarget.is_blocked ? 'ri-lock-unlock-line' : 'ri-user-forbid-line'}
+          iconColor={blockTarget.is_blocked ? 'var(--success)' : 'var(--danger)'}
+          onClose={() => !isBlocking && setBlockTarget(null)}
+          busy={isBlocking}
+          maxWidth={520}
+          onSubmit={handleBlock}
+          footer={
+            <>
+              <button type="button" className="btn-secondary-action" onClick={() => setBlockTarget(null)} disabled={isBlocking}>
+                Bekor qilish
+              </button>
+              {blockTarget.is_blocked ? (
+                <button type="submit" className="btn-admin-success" disabled={isBlocking}>
+                  <i className={isBlocking ? 'ri-loader-4-line admin-spin' : 'ri-lock-unlock-line'} />
+                  {isBlocking ? 'Bajarilmoqda...' : 'Blokdan chiqarishni tasdiqlash'}
+                </button>
+              ) : (
+                <button type="submit" className="btn-admin-danger" disabled={isBlocking || blockReason.trim().length < 3}>
+                  <i className={isBlocking ? 'ri-loader-4-line admin-spin' : 'ri-user-forbid-line'} />
+                  {isBlocking ? 'Bajarilmoqda...' : 'Bloklashni tasdiqlash'}
+                </button>
+              )}
+            </>
+          }
+        >
+          {blockTarget.is_blocked ? (
+            <Alert tone="info">Mijoz qayta tizimga kira oladi va hamyonidan to‘lov qila oladi.</Alert>
+          ) : (
+            <div className="dangerous-action-banner">
+              <i className="ri-alarm-warning-line" />
+              <div>
+                <strong>Diqqat:</strong> bloklangan mijoz tizimga kira olmaydi, joriy sessiyalari darhol ishlamay qoladi va to‘lov qila
+                olmaydi. Hamyon balansi saqlanadi. Amal audit jurnaliga yoziladi.
               </div>
+            </div>
+          )}
 
-              <div className="operations-modal__footer">
-                <button
-                  type="button"
-                  className="btn-operations-secondary"
-                  onClick={() => setSelectedClient(null)}
-                  disabled={isSubmitting}
-                >
+          <div className="admin-summary-box">
+            <strong>{blockTarget.full_name || 'Ismi kiritilmagan'}</strong>
+            <span>
+              {blockTarget.phone} • Balans: {formatSom(blockTarget.wallet_balance)}
+            </span>
+            {blockTarget.is_blocked && blockTarget.block_reason && <span>Bloklash sababi: {blockTarget.block_reason}</span>}
+          </div>
+
+          {blockError && <Alert>{blockError}</Alert>}
+
+          <div className="uyushma-form-group">
+            <label htmlFor="block-reason">
+              {blockTarget.is_blocked ? 'Izoh (ixtiyoriy, audit jurnaliga yoziladi)' : 'Bloklash sababi (audit jurnaliga yoziladi) *'}
+            </label>
+            <textarea
+              id="block-reason"
+              className="uyushma-textarea"
+              rows={3}
+              maxLength={255}
+              value={blockReason}
+              onChange={(e) => setBlockReason(e.target.value)}
+              placeholder={blockTarget.is_blocked ? 'Masalan: mijoz murojaati ko‘rib chiqildi' : 'Masalan: to‘lovlarda firibgarlik belgilari'}
+              autoFocus
+            />
+            {!blockTarget.is_blocked && <span className="hint">Kamida 3 ta belgi • {blockReason.trim().length}/255</span>}
+          </div>
+        </AdminModal>
+      )}
+
+      {/* Wallet adjustment (financial, audited) */}
+      {adjustTarget && (
+        <AdminModal
+          title="Hamyon balansini tuzatish"
+          icon="ri-scales-3-line"
+          onClose={closeAdjust}
+          busy={isAdjusting}
+          maxWidth={540}
+          onSubmit={adjustStep === 'form' ? handleAdjustContinue : adjustStep === 'confirm' ? handleAdjustSubmit : closeAdjust}
+          footer={
+            adjustStep === 'form' ? (
+              <>
+                <button type="button" className="btn-secondary-action" onClick={closeAdjust}>
                   Bekor qilish
+                </button>
+                <button type="submit" className="btn-admin-primary">
+                  Davom etish <i className="ri-arrow-right-line" />
+                </button>
+              </>
+            ) : adjustStep === 'confirm' ? (
+              <>
+                <button type="button" className="btn-secondary-action" onClick={() => setAdjustStep('form')} disabled={isAdjusting}>
+                  <i className="ri-arrow-left-line" /> Orqaga
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  style={{
-                    background: selectedClient.is_blocked ? 'var(--success)' : 'var(--danger)',
-                    color: '#fff',
-                    border: 'none',
-                    padding: '0.6rem 1.2rem',
-                    borderRadius: 'var(--radius-md)',
-                    fontWeight: 600,
-                    cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.4rem',
-                  }}
+                  className={adjustDirection === 'credit' ? 'btn-admin-success' : 'btn-admin-danger'}
+                  disabled={isAdjusting || !adjustChecked}
                 >
-                  {isSubmitting ? (
-                    <>
-                      <i className="ri-loader-4-line ri-spin" /> Bajarilmoqda...
-                    </>
-                  ) : (
-                    <>
-                      <i className={selectedClient.is_blocked ? 'ri-lock-unlock-line' : 'ri-user-forbid-line'} />
-                      {selectedClient.is_blocked ? 'Blokdan chiqarishni tasdiqlash' : 'Bloklashni tasdiqlash'}
-                    </>
-                  )}
+                  <i className={isAdjusting ? 'ri-loader-4-line admin-spin' : 'ri-check-double-line'} />
+                  {isAdjusting ? 'Bajarilmoqda...' : 'Tasdiqlash va o‘tkazish'}
+                </button>
+              </>
+            ) : (
+              <button type="submit" className="btn-admin-primary">
+                Yopish
+              </button>
+            )
+          }
+        >
+          <div className="admin-summary-box">
+            <strong>{adjustTarget.full_name || 'Ismi kiritilmagan'}</strong>
+            <span>
+              {adjustTarget.phone} • ID {adjustTarget.id}
+            </span>
+            <span>
+              Joriy balans (ro‘yxat yuklangan paytdagi): <strong>{formatSom(adjustTarget.wallet_balance)}</strong>
+            </span>
+          </div>
+
+          {adjustError && <Alert>{adjustError}</Alert>}
+
+          {adjustStep === 'form' && (
+            <>
+              <Alert tone="info">
+                Balans to‘g‘ridan-to‘g‘ri o‘zgartirilmaydi: ledgerga yangi <span className="admin-mono">adjustment</span> yozuvi
+                qo‘shiladi va amal audit jurnalida saqlanadi. Xato tuzatishni teskari yozuv bilan qoplash mumkin.
+              </Alert>
+
+              <div className="admin-segmented" role="radiogroup" aria-label="Tuzatish turi">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={adjustDirection === 'credit'}
+                  className={adjustDirection === 'credit' ? 'active' : ''}
+                  onClick={() => setAdjustDirection('credit')}
+                >
+                  <i className="ri-add-line" /> Hisobga qo‘shish
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={adjustDirection === 'debit'}
+                  className={adjustDirection === 'debit' ? 'active' : ''}
+                  onClick={() => setAdjustDirection('debit')}
+                >
+                  <i className="ri-subtract-line" /> Hisobdan yechish
                 </button>
               </div>
-            </form>
-          </div>
-        </div>
+
+              <div className="uyushma-form-group">
+                <label htmlFor="adjust-amount">Summa (so‘m) *</label>
+                <input
+                  id="adjust-amount"
+                  className="uyushma-input"
+                  inputMode="numeric"
+                  maxLength={14}
+                  value={adjustAmount ? adjustAmount.toLocaleString('ru-RU') : adjustAmountText.replace(/[^\d]/g, '')}
+                  onChange={(e) => setAdjustAmountText(e.target.value)}
+                  placeholder="Masalan: 15 000"
+                  autoFocus
+                />
+                <span className="hint">
+                  Butun so‘m, maksimal {formatSom(WALLET_ADJUST_LIMIT_UZS)}
+                  {adjustAmount > 0 && ` • kutilayotgan balans: ${formatSom(expectedBalance)}`}
+                </span>
+              </div>
+
+              <div className="uyushma-form-group">
+                <label htmlFor="adjust-reason">Sabab (audit jurnaliga yoziladi) *</label>
+                <textarea
+                  id="adjust-reason"
+                  className="uyushma-textarea"
+                  rows={3}
+                  maxLength={255}
+                  value={adjustReason}
+                  onChange={(e) => setAdjustReason(e.target.value)}
+                  placeholder="Masalan: Click to‘lovi hamyonga tushmagan, tranzaksiya #…"
+                />
+                <span className="hint">Kamida 3 ta belgi • {adjustReason.trim().length}/255</span>
+              </div>
+            </>
+          )}
+
+          {adjustStep === 'confirm' && (
+            <>
+              <div className={`dangerous-action-banner${adjustDirection === 'credit' ? ' warning' : ''}`}>
+                <i className="ri-bank-card-line" />
+                <div>
+                  <strong>Moliyaviy amalni tasdiqlang.</strong> Yozuv ledgerdan o‘chirilmaydi.
+                </div>
+              </div>
+              <dl className="admin-dl">
+                <dt>Amal</dt>
+                <dd style={{ color: adjustDirection === 'credit' ? 'var(--success)' : 'var(--danger)', fontSize: '1.05rem' }}>
+                  {adjustDirection === 'credit' ? '+' : '−'}
+                  {formatSom(adjustAmount)}
+                </dd>
+                <dt>Mijoz</dt>
+                <dd>
+                  {adjustTarget.full_name || '—'} ({adjustTarget.phone})
+                </dd>
+                <dt>Kutilayotgan balans</dt>
+                <dd>{formatSom(expectedBalance)}</dd>
+                <dt>Sabab</dt>
+                <dd>{adjustReason.trim()}</dd>
+              </dl>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+                <input type="checkbox" checked={adjustChecked} onChange={(e) => setAdjustChecked(e.target.checked)} />
+                <span>Summa, yo‘nalish (qo‘shish/yechish) va mijozni tekshirdim.</span>
+              </label>
+            </>
+          )}
+
+          {adjustStep === 'done' && adjustResult && (
+            <>
+              <Alert tone="success">Tuzatish ledgerga yozildi.</Alert>
+              <dl className="admin-dl">
+                <dt>Ledger yozuvi</dt>
+                <dd className="admin-mono">#{adjustResult.id} ({adjustResult.entry_type})</dd>
+                <dt>Summa</dt>
+                <dd>
+                  {adjustResult.amount_uzs > 0 ? '+' : '−'}
+                  {formatSom(Math.abs(adjustResult.amount_uzs))}
+                </dd>
+                <dt>Yangi balans</dt>
+                <dd>{formatSom(adjustResult.balance_after_uzs)}</dd>
+                <dt>Vaqt</dt>
+                <dd>{formatDateTime(adjustResult.created_at)}</dd>
+                <dt>Izoh</dt>
+                <dd>{adjustResult.description}</dd>
+              </dl>
+            </>
+          )}
+        </AdminModal>
       )}
     </div>
-  );
+  )
 }

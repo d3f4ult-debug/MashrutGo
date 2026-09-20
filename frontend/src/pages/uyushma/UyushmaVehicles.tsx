@@ -1,18 +1,20 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useUyushmaScope } from '../../contexts/UyushmaScopeContext';
 import { uyushmaApi } from '../../services/api/uyushmaApi';
 import type { UyushmaVehicle, UyushmaRoute, UyushmaDriver, VehicleType } from '../../types/uyushma';
 import './UyushmaOperations.css';
 
 export function UyushmaVehicles() {
-  const { user } = useAuth();
-  const uyushmaId = user?.uyushma_id || 'uyushma-01';
+  const { uyushmaId: scopedUyushmaId } = useUyushmaScope();
+  const uyushmaId = scopedUyushmaId ?? '';
 
   const [vehicles, setVehicles] = useState<UyushmaVehicle[]>([]);
   const [routes, setRoutes] = useState<UyushmaRoute[]>([]);
   const [drivers, setDrivers] = useState<UyushmaDriver[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [nfcTag, setNfcTag] = useState('');
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -28,37 +30,54 @@ export function UyushmaVehicles() {
   const [selectedDriverId, setSelectedDriverId] = useState('');
   const [isActive, setIsActive] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const loadData = async () => {
+  // A Super Admin can switch uyushma mid-load: the answer of an abandoned scope must be ignored
+  const activeScope = useRef(uyushmaId);
+  activeScope.current = uyushmaId;
+
+  const loadData = useCallback(async () => {
+    if (!uyushmaId) return;
     setIsLoading(true);
+    setLoadError(null);
     try {
       const [vehData, routesData, driversData] = await Promise.all([
         uyushmaApi.getVehicles(uyushmaId),
         uyushmaApi.getRoutes(uyushmaId),
         uyushmaApi.getDrivers(uyushmaId),
       ]);
+      if (activeScope.current !== uyushmaId) return;
       setVehicles(vehData);
       setRoutes(routesData);
       setDrivers(driversData);
-    } catch {
-      // Fallback in API
+    } catch (err: unknown) {
+      if (activeScope.current !== uyushmaId) return;
+      setLoadError(err instanceof Error ? err.message : "Ma'lumotlarni yuklab bo'lmadi");
     } finally {
-      setIsLoading(false);
+      if (activeScope.current === uyushmaId) setIsLoading(false);
     }
-  };
+  }, [uyushmaId]);
 
   useEffect(() => {
-    loadData();
+    void loadData();
+  }, [loadData]);
+
+  // Never leave a form open over a record that belongs to the uyushma we just left
+  useEffect(() => {
+    setIsModalOpen(false);
+    setEditingVehicle(null);
+    setFormError(null);
   }, [uyushmaId]);
 
   const openCreateModal = () => {
     setEditingVehicle(null);
-    setInternalId(`VEH-${Math.floor(100 + Math.random() * 900)}`);
-    setLicensePlate('60 A ');
-    setModel('Isuzu NP37');
-    setColor('Oq');
-    setVehicleType('isuzu');
-    setSelectedRouteId(routes[0]?.id || '');
+    setInternalId('');
+    setLicensePlate('');
+    setModel('');
+    setColor('');
+    setNfcTag('');
+    setVehicleType('damas');
+    setSelectedRouteId('');
     setSelectedDriverId('');
     setIsActive(true);
     setFormError(null);
@@ -67,11 +86,12 @@ export function UyushmaVehicles() {
 
   const openEditModal = (v: UyushmaVehicle) => {
     setEditingVehicle(v);
-    setInternalId(v.id);
+    setInternalId(v.internal_id);
+    setNfcTag(v.nfc_tag_id || '');
     setLicensePlate(v.license_plate || '');
     setModel(v.model || '');
     setColor(v.color || '');
-    setVehicleType(v.type || 'isuzu');
+    setVehicleType(v.type || 'other');
     setSelectedRouteId(v.assigned_route_id || '');
     setSelectedDriverId(v.assigned_driver_id || '');
     setIsActive(v.is_active);
@@ -79,35 +99,28 @@ export function UyushmaVehicles() {
     setIsModalOpen(true);
   };
 
-  // 1-to-1 Conflict check
-  const validationResult = uyushmaApi.validateAssignment(
-    selectedDriverId || undefined,
-    internalId || undefined,
-    selectedRouteId || undefined,
-    selectedDriverId || undefined,
-    editingVehicle?.id
-  );
+  // 1-to-1 Conflict check: this vehicle's own driver is what the form changes, so only the
+  // selected driver's other assignment can block the save.
+  const assignment = {
+    uyushmaId,
+    form: 'vehicle' as const,
+    driverId: selectedDriverId || undefined,
+    vehicleId: editingVehicle?.id,
+    routeId: selectedRouteId || undefined,
+  };
+  const validationResult = uyushmaApi.validateAssignment(assignment);
 
   const handleSaveVehicle = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!internalId.trim()) {
-      setFormError("Ichki transport ID majburiy.");
-      return;
-    }
-
-    const check = uyushmaApi.validateAssignment(
-      selectedDriverId || undefined,
-      internalId,
-      selectedRouteId || undefined,
-      selectedDriverId || undefined,
-      editingVehicle?.id
-    );
+    if (saving) return; // a second submit would create a second vehicle
+    const check = uyushmaApi.validateAssignment(assignment);
 
     if (!check.valid) {
       setFormError(check.error || 'Noma\'lum xatolik');
       return;
     }
 
+    setSaving(true);
     try {
       if (editingVehicle) {
         const updated = await uyushmaApi.updateVehicle(uyushmaId, editingVehicle.id, {
@@ -115,6 +128,7 @@ export function UyushmaVehicles() {
           model: model || undefined,
           color: color || undefined,
           type: vehicleType,
+          nfc_tag_id: nfcTag || undefined,
           assigned_route_id: selectedRouteId || undefined,
           assigned_driver_id: selectedDriverId || undefined,
           is_active: isActive,
@@ -122,7 +136,8 @@ export function UyushmaVehicles() {
         setVehicles(prev => prev.map(v => (v.id === updated.id ? updated : v)));
       } else {
         const created = await uyushmaApi.createVehicle(uyushmaId, {
-          id: internalId,
+          internal_id: internalId || undefined,
+          nfc_tag_id: nfcTag || undefined,
           license_plate: licensePlate || undefined,
           model: model || undefined,
           color: color || undefined,
@@ -136,19 +151,25 @@ export function UyushmaVehicles() {
       setIsModalOpen(false);
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : 'Xatolik yuz berdi');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDeleteVehicle = async (vehicleId: string) => {
-    if (!window.confirm("Haqiqatan ham ushbu transportni o'chirmoqchimisiz?")) return;
-    await uyushmaApi.deleteVehicle(uyushmaId, vehicleId);
-    setVehicles(prev => prev.filter(v => v.id !== vehicleId));
+    if (!window.confirm("Transport faolsizlantiriladi va haydovchi/yo'nalishdan ajratiladi. Davom etasizmi?")) return;
+    try {
+      await uyushmaApi.deleteVehicle(uyushmaId, vehicleId);
+      await loadData();
+    } catch (err: unknown) {
+      setLoadError(err instanceof Error ? err.message : 'Xatolik yuz berdi');
+    }
   };
 
   const filteredVehicles = vehicles.filter(v => {
     const q = searchQuery.toLowerCase();
     return (
-      v.id.toLowerCase().includes(q) ||
+      v.internal_id.toLowerCase().includes(q) ||
       (v.license_plate && v.license_plate.toLowerCase().includes(q)) ||
       (v.model && v.model.toLowerCase().includes(q)) ||
       (v.assigned_driver_name && v.assigned_driver_name.toLowerCase().includes(q)) ||
@@ -199,6 +220,13 @@ export function UyushmaVehicles() {
       </div>
 
       {/* Vehicles Table */}
+      {loadError && (
+        <div className="rule-conflict-alert" style={{ marginBottom: '1rem' }}>
+          <i className="ri-error-warning-fill" />
+          <div>{loadError}</div>
+        </div>
+      )}
+
       <div className="uyushma-table-wrapper">
         <table className="uyushma-table">
           <thead>
@@ -230,7 +258,10 @@ export function UyushmaVehicles() {
               filteredVehicles.map(v => (
                 <tr key={v.id}>
                   <td>
-                    <strong style={{ fontFamily: 'monospace' }}>{v.id}</strong>
+                    <strong style={{ fontFamily: 'monospace' }}>{v.internal_id}</strong>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', fontFamily: 'monospace' }} title="QR kod mazmuni">
+                      QR: {v.qr_payload}
+                    </div>
                   </td>
                   <td>
                     {v.license_plate ? (
@@ -242,7 +273,7 @@ export function UyushmaVehicles() {
                   <td>
                     <div style={{ fontWeight: 600 }}>{v.model || 'Standart transport'}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                      {v.color || 'Rangi yo\'q'} • {v.type?.toUpperCase() || 'ISUZU'}
+                      {v.color || 'Rangi ko\'rsatilmagan'} • {v.type?.toUpperCase() || '—'}
                     </div>
                   </td>
                   <td>
@@ -286,9 +317,10 @@ export function UyushmaVehicles() {
                       <button
                         className="btn-table-action danger"
                         onClick={() => handleDeleteVehicle(v.id)}
-                        title="O'chirish"
+                        title="Faolsizlantirish"
+                        disabled={!v.is_active}
                       >
-                        <i className="ri-delete-bin-line" />
+                        <i className="ri-forbid-line" />
                       </button>
                     </div>
                   </td>
@@ -331,17 +363,17 @@ export function UyushmaVehicles() {
 
                 <div className="form-grid-2">
                   <div className="uyushma-form-group">
-                    <label>Ichki Transport ID * (Majburiy)</label>
+                    <label>Ichki transport ID</label>
                     <input
                       type="text"
                       className="uyushma-input"
-                      placeholder="VEH-105"
+                      placeholder="Bo'sh qoldirilsa avtomatik yaratiladi"
                       value={internalId}
                       onChange={e => setInternalId(e.target.value)}
                       disabled={!!editingVehicle}
-                      required
+                      pattern="[A-Za-z0-9_-]{3,50}"
                     />
-                    <span className="hint">Tizimdagi noyob identifikator</span>
+                    <span className="hint">Tizim bo'yicha noyob, QR stikerga yoziladi (o'zgarmaydi)</span>
                   </div>
 
                   <div className="uyushma-form-group">
@@ -388,12 +420,24 @@ export function UyushmaVehicles() {
                       value={vehicleType}
                       onChange={e => setVehicleType(e.target.value as VehicleType)}
                     >
-                      <option value="isuzu">Isuzu (Avtobus)</option>
-                      <option value="damas">Damas (Mikroavtobus)</option>
+                      <option value="damas">Damas</option>
+                      <option value="gazel">Gazel</option>
+                      <option value="isuzu">Isuzu</option>
                       <option value="bus">Katta avtobus (Yutong)</option>
                       <option value="minibus">Minibus</option>
                       <option value="other">Boshqa</option>
                     </select>
+                  </div>
+
+                  <div className="uyushma-form-group">
+                    <label>NFC teg (ixtiyoriy)</label>
+                    <input
+                      type="text"
+                      className="uyushma-input"
+                      placeholder="NFC stiker UID yoki matni"
+                      value={nfcTag}
+                      onChange={e => setNfcTag(e.target.value)}
+                    />
                   </div>
 
                   <div className="uyushma-form-group">
@@ -440,11 +484,14 @@ export function UyushmaVehicles() {
                         onChange={e => setSelectedDriverId(e.target.value)}
                       >
                         <option value="">— Haydovchisiz —</option>
-                        {drivers.map(d => (
-                          <option key={d.id} value={d.id}>
-                            {d.full_name} ({d.phone})
-                          </option>
-                        ))}
+                        {drivers.map(d => {
+                          const taken = Boolean(d.assigned_vehicle_id && d.assigned_vehicle_id !== editingVehicle?.id);
+                          return (
+                            <option key={d.id} value={d.id} disabled={taken}>
+                              {d.full_name} ({d.phone}){taken ? ` — band: ${d.assigned_vehicle_plate}` : ''}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
                   </div>
@@ -462,10 +509,10 @@ export function UyushmaVehicles() {
                 <button
                   type="submit"
                   className="btn-primary-action"
-                  disabled={!validationResult.valid}
+                  disabled={!validationResult.valid || saving}
                 >
-                  <i className="ri-save-line" />
-                  Saqlash
+                  <i className={saving ? 'ri-loader-4-line ri-spin' : 'ri-save-line'} />
+                  {saving ? 'Saqlanmoqda…' : 'Saqlash'}
                 </button>
               </div>
             </form>

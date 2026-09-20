@@ -33,7 +33,7 @@ vi.mock('maplibre-gl', () => {
 
 import { addMarker, removeMarker, clearAllMarkers, drawPolyline, clearPolyline } from './maptiler'
 
-function makeFakeMap() {
+function makeFakeMap(): Record<string, any> {
   return {
     _markers: new Map(),
     _sources: {} as Record<string, any>,

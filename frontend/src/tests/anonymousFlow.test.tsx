@@ -1,59 +1,57 @@
-import React from 'react'
 import { render, screen } from '@testing-library/react'
-import { describe, it, expect, vi } from 'vitest'
-import { MemoryRouter, Routes, Route } from 'react-router-dom'
-import { AuthProvider } from '@/services/auth/AuthProvider'
+import { forwardRef } from 'react'
+import { MemoryRouter } from 'react-router-dom'
+import { AuthProvider } from '@/contexts/AuthContext'
 import Home from '@/features/client/pages/Home'
-import RouteDetails from '@/pages/RouteDetails'
 import WalletPage from '@/pages/WalletPage'
+import { clientApi } from '@/services/api/clientApi'
 
-// Mock AppMap to avoid WebGL context requirements in jsdom
-vi.mock('@/components/map/AppMap', () => {
-  return {
-    default: () => <div data-testid="app-map-mock">Map</div>
-  }
-})
+vi.mock('@/components/map/AppMap', () => ({
+  default: forwardRef(function MapStub() {
+    return <div data-testid="app-map-mock" />
+  }),
+}))
 
-describe('Anonymous User Flow', () => {
-  it('allows anonymous browsing of Home page without authentication', () => {
+vi.mock('@/services/api/clientApi', () => ({
+  clientApi: {
+    listRoutes: vi.fn(),
+    searchPlaces: vi.fn().mockResolvedValue([]),
+    walletBalance: vi.fn(),
+    walletTransactions: vi.fn(),
+    paymentConfig: vi.fn().mockResolvedValue({ clickConfigured: false, sandboxEnabled: true, minTopupSoM: 1000, maxTopupSoM: 2000000, maintenanceMode: false }),
+  },
+}))
+
+describe('Anonymous client flow (no login required for routing)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.mocked(clientApi.listRoutes).mockResolvedValue([
+      { id: 1, routeNumber: '15', name: 'Eski shahar — Yangi bozor', originName: 'Eski shahar', destinationName: 'Yangi bozor' },
+    ])
+  })
+
+  it('lets an anonymous user search and browse published routes', async () => {
     render(
-      <MemoryRouter initialEntries={['/']}>
+      <MemoryRouter>
         <AuthProvider>
           <Home />
         </AuthProvider>
-      </MemoryRouter>
+      </MemoryRouter>,
     )
-
-    expect(screen.getByText(/Qayerga bormoqchisiz/i)).toBeTruthy()
-    expect(screen.getByText(/Tavsiya etilgan marshrutlar/i)).toBeTruthy()
+    expect(screen.getByText(/Qayerga bormoqchisiz/i)).toBeInTheDocument()
+    expect(await screen.findByText('Eski shahar — Yangi bozor')).toBeInTheDocument()
+    expect(clientApi.listRoutes).toHaveBeenCalled()
   })
 
-  it('allows anonymous viewing of RouteDetails page with live fleet and stops', () => {
+  it('asks for login only for personal features such as the wallet', async () => {
     render(
-      <MemoryRouter initialEntries={['/route/15']}>
-        <AuthProvider>
-          <Routes>
-            <Route path="/route/:id" element={<RouteDetails />} />
-          </Routes>
-        </AuthProvider>
-      </MemoryRouter>
-    )
-
-    expect(screen.getByText(/15-sonli Marshrut/i)).toBeTruthy()
-    expect(screen.getByText(/Kutayapman \/ Kuzatish/i)).toBeTruthy()
-  })
-
-  it('prompts authentication when entering WalletPage without an active session', () => {
-    render(
-      <MemoryRouter initialEntries={['/wallet']}>
+      <MemoryRouter>
         <AuthProvider>
           <WalletPage />
         </AuthProvider>
-      </MemoryRouter>
+      </MemoryRouter>,
     )
-
-    // Auth modal should open automatically for anonymous user
-    expect(screen.getByText(/Tizimga kirish/i)).toBeTruthy()
-    expect(screen.getByText(/Hamyon va to‘lovlardan foydalanish uchun kiring/i)).toBeTruthy()
+    expect(await screen.findByText('Hamyondan foydalanish uchun hisobingizga kiring.')).toBeInTheDocument()
+    expect(clientApi.walletBalance).not.toHaveBeenCalled()
   })
 })

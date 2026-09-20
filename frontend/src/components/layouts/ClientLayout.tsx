@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import HeaderAuthControls from '@/components/auth/HeaderAuthControls'
 import OfflineIndicator from '@/components/ui/OfflineIndicator'
-import PaymentModal from '@/components/client/PaymentModal'
 import { watchStateService } from '@/services/watch/watchStateService'
 import { ClientWatchSession } from '@/types/client'
 import { uz } from '@/locales/uz'
@@ -10,7 +9,6 @@ import { uz } from '@/locales/uz'
 export default function ClientLayout() {
   const location = useLocation()
   const [watchSession, setWatchSession] = useState<ClientWatchSession>(watchStateService.getSession())
-  const [isPayModalOpen, setIsPayModalOpen] = useState(false)
 
   useEffect(() => {
     const unsub = watchStateService.subscribe((s) => {
@@ -65,18 +63,9 @@ export default function ClientLayout() {
 
             <div className="h-4 w-px bg-neutral-200" />
 
-            {/* Portal links for quick role switching & testing */}
-            <div className="flex items-center gap-1.5 text-xs">
-              <Link to="/driver" className="px-2 py-1 rounded bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 transition-colors">
-                Haydovchi
-              </Link>
-              <Link to="/uyushma" className="px-2 py-1 rounded bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 transition-colors">
-                Uyushma
-              </Link>
-              <Link to="/admin" className="px-2 py-1 rounded bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 transition-colors">
-                Admin
-              </Link>
-            </div>
+            <Link to="/login" className="text-xs px-2 py-1 rounded bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 transition-colors">
+              Xodimlar kirishi
+            </Link>
           </nav>
 
           <div className="flex items-center gap-3">
@@ -86,7 +75,7 @@ export default function ClientLayout() {
       </header>
 
       {/* Active Watch/Ride Status Notification Banner */}
-      {watchSession.status !== 'IDLE' && (
+      {watchSession.status !== 'IDLE' && watchSession.routeId && (
         <div className="bg-emerald-600 text-white px-4 py-2 text-xs shadow-inner">
           <div className="max-w-5xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -101,7 +90,7 @@ export default function ClientLayout() {
               </span>
             </div>
             <Link
-              to={`/route/${watchSession.routeNumber || '15'}`}
+              to={`/route/${watchSession.routeId}`}
               className="underline font-bold hover:text-emerald-100 ml-3"
             >
               Xaritani ochish →
@@ -155,11 +144,6 @@ export default function ClientLayout() {
         })}
       </nav>
 
-      {/* Global Quick Payment Modal */}
-      <PaymentModal
-        isOpen={isPayModalOpen}
-        onClose={() => setIsPayModalOpen(false)}
-      />
     </div>
   )
 }

@@ -1,12 +1,10 @@
 import json
 import logging
 import math
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 
-from app.models.shift import DriverShift, LocationSnapshot
-from app.models.transport import RouteDirection, RouteWaypoint
+from app.models.transport import RouteDirection
 from app.schemas.eta import ETAResponse
 from app.services.realtime.tracking_service import tracking_service
 from app.services.routing.maptiler_adapter import haversine_distance
@@ -15,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 EARTH_RADIUS_METERS = 6371000.0
 PASS_TOLERANCE_METERS = 80.0  # Vehicle passed stop if along-route distance > stop + 80m
+OFF_ROUTE_TOLERANCE_METERS = 300.0
 
 
 def extract_direction_polyline_coordinates(direction: RouteDirection) -> List[Tuple[float, float]]:
@@ -127,20 +126,25 @@ class ETAService:
         stop_lng: float,
         db: Session,
         stop_name: Optional[str] = None,
+        direction: Optional[RouteDirection] = None,
     ) -> ETAResponse:
         """
         Calculate ETA from live vehicles approaching the specified stop.
         If no vehicle is approaching, returns null without fabricating arrival times.
+
+        `direction` may be passed in by callers that already hold it (the route search asks for
+        many ETAs in a row; re-querying it there was an N+1).
         """
-        # 1. Fetch Route Direction
-        direction = (
-            db.query(RouteDirection)
-            .filter(
-                RouteDirection.route_id == route_id,
-                RouteDirection.direction_type == direction_type,
+        # 1. Route direction (reuse the caller's object when given)
+        if direction is None:
+            direction = (
+                db.query(RouteDirection)
+                .filter(
+                    RouteDirection.route_id == route_id,
+                    RouteDirection.direction_type == direction_type,
+                )
+                .first()
             )
-            .first()
-        )
         if not direction:
             return ETAResponse(
                 route_id=route_id,
@@ -173,45 +177,8 @@ class ETAService:
             include_stale=False,
         )
 
-        # DB fallback if tracking_service cache is cold
-        if not live_vehicles:
-            shifts = (
-                db.query(DriverShift)
-                .filter(
-                    DriverShift.route_id == route_id,
-                    DriverShift.direction == direction_type,
-                    DriverShift.status == "active",
-                )
-                .all()
-            )
-            for s in shifts:
-                if s.vehicle:
-                    latest_snap = (
-                        db.query(LocationSnapshot)
-                        .filter(LocationSnapshot.vehicle_id == s.vehicle_id)
-                        .order_by(LocationSnapshot.id.desc())
-                        .first()
-                    )
-                    if latest_snap:
-                        from app.schemas.driver import LiveVehicleStateResponse
-                        live_vehicles.append(
-                            LiveVehicleStateResponse(
-                                vehicle_id=str(s.vehicle.id),
-                                internal_id=s.vehicle.internal_id,
-                                route_id=route_id,
-                                route_number=direction.route.route_number if direction.route else "",
-                                direction=direction_type,
-                                lat=latest_snap.lat,
-                                lng=latest_snap.lng,
-                                speed_kmh=latest_snap.speed_kmh,
-                                heading=latest_snap.heading,
-                                accuracy_meters=latest_snap.accuracy_meters,
-                                captured_at=latest_snap.captured_at,
-                                is_stale=False,
-                                parking_id=None,
-                            )
-                        )
-
+        # Only fresh in-memory fixes are used (rebuilt from DB on startup). Old snapshots are
+        # never turned into an ETA: no data -> no ETA.
         if not live_vehicles:
             return ETAResponse(
                 route_id=route_id,
@@ -226,6 +193,10 @@ class ETAService:
         approaching_candidates = []
         for veh in live_vehicles:
             veh_along_dist, veh_perp_dist, _, _ = project_point_onto_polyline(veh.lat, veh.lng, polyline)
+
+            # Off-route vehicles (detour, wrong direction assignment, bad fix) cannot be map-matched
+            if veh_perp_dist > OFF_ROUTE_TOLERANCE_METERS:
+                continue
 
             # Check if vehicle has already passed the stop
             if veh_along_dist > stop_along_dist + PASS_TOLERANCE_METERS:
@@ -265,7 +236,8 @@ class ETAService:
                     status_str = "approaching"
 
             approaching_candidates.append({
-                "vehicle_id": getattr(veh, "internal_id", None) or veh.vehicle_id,
+                "vehicle_id": veh.vehicle_id,
+                "plate_number": veh.plate_number,
                 "remaining_meters": int(remaining_dist),
                 "eta_seconds": eta_sec,
                 "eta_minutes": max(1, math.ceil(eta_sec / 60.0)),
@@ -294,6 +266,7 @@ class ETAService:
             direction=direction_type,
             has_approaching_vehicle=True,
             approaching_vehicle_id=str(best["vehicle_id"]),
+            plate_number=best["plate_number"],
             eta_seconds=best["eta_seconds"],
             eta_minutes=best["eta_minutes"],
             distance_meters=best["remaining_meters"],

@@ -1,8 +1,9 @@
 .driver-layout {
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
-  max-height: 100dvh;
+  /* A definite height lets full-bleed pages (the map) use height: 100% */
+  height: 100vh;
+  height: 100dvh;
   background: var(--bg-primary);
   color: var(--text-primary);
   overflow: hidden;
@@ -67,6 +68,7 @@
 /* ── Main content ── */
 .driver-main {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 1rem;
@@ -128,3 +130,151 @@
     border-right: 1px solid var(--border-subtle);
   }
 }
+
+/* ── Connection status (GPS + realtime) ── */
+.driver-header__status {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.driver-status-dot {
+  width: 1.625rem;
+  height: 1.625rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  border: 1px solid var(--border-subtle);
+}
+
+.driver-status-dot--ok { color: var(--success); background: var(--success-subtle); }
+.driver-status-dot--warn { color: var(--warning); background: var(--warning-subtle); }
+.driver-status-dot--bad { color: var(--danger); background: var(--danger-subtle); }
+.driver-status-dot--idle { color: var(--text-tertiary); background: transparent; }
+
+/* ── Global notice (e.g. shift force-ended by an administrator) ── */
+.driver-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  background: var(--danger-subtle);
+  color: var(--danger);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.driver-notice span {
+  flex: 1;
+  color: var(--text-primary);
+}
+
+.driver-notice button {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1.125rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+@media (max-width: 380px) {
+  .driver-header__name { display: none; }
+}
+
+/* ── Notification bell ── */
+.driver-bell {
+  position: relative;
+}
+
+.driver-bell .driver-status-dot {
+  cursor: pointer;
+  position: relative;
+}
+
+.driver-bell__badge {
+  position: absolute;
+  top: -0.25rem;
+  right: -0.25rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.2rem;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.625rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.driver-bell__panel {
+  position: absolute;
+  top: 2.25rem;
+  right: 0;
+  width: min(20rem, calc(100vw - 2rem));
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 40;
+}
+
+.driver-bell__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.8125rem;
+}
+
+.driver-bell__head button {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.driver-bell__empty {
+  margin: 0;
+  padding: 1rem 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.driver-bell ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.driver-bell li + li {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.driver-bell li button {
+  width: 100%;
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.625rem 0.75rem;
+  background: none;
+  border: none;
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.driver-bell li button.unread {
+  background: var(--accent-subtle);
+}
+
+.driver-bell__title { font-size: 0.8125rem; font-weight: 700; }
+.driver-bell__body { font-size: 0.75rem; color: var(--text-secondary); }
+.driver-bell__time { font-size: 0.6875rem; color: var(--text-tertiary); }

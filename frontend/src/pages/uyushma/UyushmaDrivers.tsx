@@ -1,18 +1,26 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useUyushmaScope } from '../../contexts/UyushmaScopeContext';
 import { uyushmaApi } from '../../services/api/uyushmaApi';
 import type { UyushmaDriver, UyushmaRoute, UyushmaVehicle } from '../../types/uyushma';
 import './UyushmaOperations.css';
 
+function generatePassword(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const bytes = new Uint32Array(10);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => alphabet[b % alphabet.length]).join('');
+}
+
 export function UyushmaDrivers() {
-  const { user } = useAuth();
-  const uyushmaId = user?.uyushma_id || 'uyushma-01';
+  const { uyushmaId: scopedUyushmaId } = useUyushmaScope();
+  const uyushmaId = scopedUyushmaId ?? '';
 
   const [drivers, setDrivers] = useState<UyushmaDriver[]>([]);
   const [routes, setRoutes] = useState<UyushmaRoute[]>([]);
   const [vehicles, setVehicles] = useState<UyushmaVehicle[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -26,27 +34,43 @@ export function UyushmaDrivers() {
   const [selectedRouteId, setSelectedRouteId] = useState('');
   const [selectedVehicleId, setSelectedVehicleId] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const loadData = async () => {
+  // A Super Admin can switch uyushma mid-load: the answer of an abandoned scope must be ignored
+  const activeScope = useRef(uyushmaId);
+  activeScope.current = uyushmaId;
+
+  const loadData = useCallback(async () => {
+    if (!uyushmaId) return;
     setIsLoading(true);
+    setLoadError(null);
     try {
       const [driversData, routesData, vehiclesData] = await Promise.all([
         uyushmaApi.getDrivers(uyushmaId),
         uyushmaApi.getRoutes(uyushmaId),
         uyushmaApi.getVehicles(uyushmaId),
       ]);
+      if (activeScope.current !== uyushmaId) return;
       setDrivers(driversData);
       setRoutes(routesData);
       setVehicles(vehiclesData);
-    } catch {
-      // Fallback handled
+    } catch (err: unknown) {
+      if (activeScope.current !== uyushmaId) return;
+      setLoadError(err instanceof Error ? err.message : "Ma'lumotlarni yuklab bo'lmadi");
     } finally {
-      setIsLoading(false);
+      if (activeScope.current === uyushmaId) setIsLoading(false);
     }
-  };
+  }, [uyushmaId]);
 
   useEffect(() => {
-    loadData();
+    void loadData();
+  }, [loadData]);
+
+  // Never leave a form open over a record that belongs to the uyushma we just left
+  useEffect(() => {
+    setIsModalOpen(false);
+    setEditingDriver(null);
+    setFormError(null);
   }, [uyushmaId]);
 
   const openCreateModal = () => {
@@ -54,8 +78,8 @@ export function UyushmaDrivers() {
     setFullName('');
     setPhone('+998 ');
     setEmail('');
-    setPassword('Haydovchi2026!');
-    setSelectedRouteId(routes[0]?.id || '');
+    setPassword(generatePassword());
+    setSelectedRouteId('');
     setSelectedVehicleId('');
     setFormError(null);
     setIsModalOpen(true);
@@ -73,37 +97,42 @@ export function UyushmaDrivers() {
     setIsModalOpen(true);
   };
 
-  // Real-time conflict validation
-  const validationResult = uyushmaApi.validateAssignment(
-    editingDriver?.id,
-    selectedVehicleId || undefined,
-    selectedRouteId || undefined,
-    editingDriver?.id
-  );
+  // Real-time conflict validation: this driver's own vehicle is what the form changes, so only a
+  // vehicle that belongs to somebody else can block the save.
+  const assignment = {
+    uyushmaId,
+    form: 'driver' as const,
+    driverId: editingDriver?.id,
+    vehicleId: selectedVehicleId || undefined,
+    routeId: selectedRouteId || undefined,
+  };
+  const validationResult = uyushmaApi.validateAssignment(assignment);
 
   const handleSaveDriver = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return; // a second submit would create a second driver
     setFormError(null);
 
     // Enforce 1 Driver = 1 Vehicle = 1 Route validation
-    const check = uyushmaApi.validateAssignment(
-      editingDriver?.id,
-      selectedVehicleId || undefined,
-      selectedRouteId || undefined,
-      editingDriver?.id
-    );
+    const check = uyushmaApi.validateAssignment(assignment);
 
+    if (password && password.length < 8) {
+      setFormError("Parol kamida 8 ta belgidan iborat bo'lishi kerak");
+      return;
+    }
     if (!check.valid) {
       setFormError(check.error || 'Qoida buzilishi!');
       return;
     }
 
+    setSaving(true);
     try {
       if (editingDriver) {
         const updated = await uyushmaApi.updateDriver(uyushmaId, editingDriver.id, {
           full_name: fullName,
           phone,
           email,
+          password: password || undefined,
           assigned_route_id: selectedRouteId || undefined,
           assigned_vehicle_id: selectedVehicleId || undefined,
         });
@@ -122,13 +151,25 @@ export function UyushmaDrivers() {
       setIsModalOpen(false);
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : 'Xatolik yuz berdi');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDeleteDriver = async (driverId: string) => {
-    if (!window.confirm("Haqiqatan ham ushbu haydovchi hisobini o'chirmoqchimisiz?")) return;
-    await uyushmaApi.deleteDriver(uyushmaId, driverId);
-    setDrivers(prev => prev.filter(d => d.id !== driverId));
+    if (!window.confirm("Haydovchi hisobi faolsizlantiriladi va transport bo'shatiladi. Davom etasizmi?")) return;
+    try {
+      await uyushmaApi.deleteDriver(uyushmaId, driverId);
+      await loadData();
+    } catch (err: unknown) {
+      setLoadError(err instanceof Error ? err.message : 'Xatolik yuz berdi');
+    }
+  };
+
+  const handleVehicleChange = (vehicleId: string) => {
+    setSelectedVehicleId(vehicleId);
+    const vehicle = vehicles.find(v => v.id === vehicleId);
+    setSelectedRouteId(vehicle?.assigned_route_id || '');
   };
 
   const filteredDrivers = drivers.filter(d => {
@@ -136,7 +177,7 @@ export function UyushmaDrivers() {
     return (
       d.full_name.toLowerCase().includes(q) ||
       d.phone.toLowerCase().includes(q) ||
-      d.email.toLowerCase().includes(q) ||
+      (d.email || '').toLowerCase().includes(q) ||
       (d.assigned_route_number && d.assigned_route_number.toLowerCase().includes(q))
     );
   });
@@ -174,6 +215,13 @@ export function UyushmaDrivers() {
           <strong>Muhim tizim qoidasi:</strong> Haydovchilar mustaqil ro'yxatdan o'ta olmaydi. Uyushma haydovchi hisobini ochadi, unga bitta yo'nalish va bitta transport biriktiradi (1 Haydovchi = 1 Transport = 1 Yo'nalish).
         </div>
       </div>
+
+      {loadError && (
+        <div className="rule-conflict-alert" style={{ marginBottom: '1rem' }}>
+          <i className="ri-error-warning-fill" />
+          <div>{loadError}</div>
+        </div>
+      )}
 
       {/* Toolbar */}
       <div className="uyushma-toolbar">
@@ -224,7 +272,7 @@ export function UyushmaDrivers() {
                   <td>
                     <div style={{ fontWeight: 600 }}>{d.full_name}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                      {d.phone} • {d.email}
+                      {d.phone}{d.email ? ` • ${d.email}` : ''}
                     </div>
                   </td>
                   <td>
@@ -246,6 +294,11 @@ export function UyushmaDrivers() {
                       <span className="status-pill online">
                         <i className="ri-radio-button-fill" />
                         Smenada
+                      </span>
+                    ) : d.active_shift ? (
+                      <span className="status-pill offline">
+                        <i className="ri-signal-wifi-error-line" />
+                        Smenada (GPS kutilmoqda)
                       </span>
                     ) : (
                       <span className="status-pill offline">
@@ -271,9 +324,9 @@ export function UyushmaDrivers() {
                       <button
                         className="btn-table-action danger"
                         onClick={() => handleDeleteDriver(d.id)}
-                        title="O'chirish"
+                        title="Faolsizlantirish"
                       >
-                        <i className="ri-delete-bin-line" />
+                        <i className="ri-user-unfollow-line" />
                       </button>
                     </div>
                   </td>
@@ -343,31 +396,30 @@ export function UyushmaDrivers() {
 
                 <div className="form-grid-2">
                   <div className="uyushma-form-group">
-                    <label>Login Email *</label>
+                    <label>Email (ixtiyoriy)</label>
                     <input
                       type="email"
                       className="uyushma-input"
                       placeholder="driver@mashrutgo.uz"
                       value={email}
                       onChange={e => setEmail(e.target.value)}
-                      required
                     />
                   </div>
 
-                  {!editingDriver && (
-                    <div className="uyushma-form-group">
-                      <label>Dastlabki parol *</label>
-                      <input
-                        type="text"
-                        className="uyushma-input"
-                        placeholder="Parol kiriting"
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        required
-                      />
-                      <span className="hint">Haydovchiga PWA ilovasiga kirish uchun beriladi</span>
-                    </div>
-                  )}
+                  <div className="uyushma-form-group">
+                    <label>{editingDriver ? 'Yangi parol (ixtiyoriy)' : 'Dastlabki parol *'}</label>
+                    <input
+                      type="text"
+                      className="uyushma-input"
+                      placeholder={editingDriver ? "O'zgartirmaslik uchun bo'sh qoldiring" : 'Kamida 8 belgi'}
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      required={!editingDriver}
+                      minLength={8}
+                      autoComplete="new-password"
+                    />
+                    <span className="hint">Login: telefon raqami. Parolni haydovchiga xavfsiz yo'l bilan bering.</span>
+                  </div>
                 </div>
 
                 <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
@@ -378,11 +430,13 @@ export function UyushmaDrivers() {
 
                   <div className="form-grid-2">
                     <div className="uyushma-form-group">
-                      <label>Yo'nalishni tanlang</label>
+                      <label>Yo'nalish (transport orqali)</label>
                       <select
                         className="uyushma-select"
                         value={selectedRouteId}
                         onChange={e => setSelectedRouteId(e.target.value)}
+                        disabled={!selectedVehicleId}
+                        title={!selectedVehicleId ? 'Avval transport tanlang' : undefined}
                       >
                         <option value="">— Yo'nalishsiz —</option>
                         {routes.map(r => (
@@ -398,14 +452,18 @@ export function UyushmaDrivers() {
                       <select
                         className="uyushma-select"
                         value={selectedVehicleId}
-                        onChange={e => setSelectedVehicleId(e.target.value)}
+                        onChange={e => handleVehicleChange(e.target.value)}
                       >
                         <option value="">— Transportsiz —</option>
-                        {vehicles.map(v => (
-                          <option key={v.id} value={v.id}>
-                            {v.license_plate || v.id} {v.model ? `(${v.model})` : ''}
-                          </option>
-                        ))}
+                        {vehicles.filter(v => v.is_active).map(v => {
+                          const taken = Boolean(v.assigned_driver_id && v.assigned_driver_id !== editingDriver?.id);
+                          return (
+                            <option key={v.id} value={v.id} disabled={taken}>
+                              {v.license_plate || v.internal_id} {v.model ? `(${v.model})` : ''}
+                              {taken ? ` — band: ${v.assigned_driver_name}` : ''}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
                   </div>
@@ -423,10 +481,10 @@ export function UyushmaDrivers() {
                 <button
                   type="submit"
                   className="btn-primary-action"
-                  disabled={!validationResult.valid}
+                  disabled={!validationResult.valid || saving}
                 >
-                  <i className="ri-save-line" />
-                  Hisobni yaratish / saqlash
+                  <i className={saving ? 'ri-loader-4-line ri-spin' : 'ri-save-line'} />
+                  {saving ? 'Saqlanmoqda…' : 'Hisobni yaratish / saqlash'}
                 </button>
               </div>
             </form>

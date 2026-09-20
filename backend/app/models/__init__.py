@@ -3,8 +3,8 @@ from app.models.user import User, ClientProfile, DriverProfile
 from app.models.uyushma import Uyushma
 from app.models.transport import Vehicle, Route, RouteDirection, RouteWaypoint, Parking
 from app.models.shift import DriverShift, LocationSnapshot, ClientRouteWatch, ClientRideState
-from app.models.finance import FareRule, Wallet, WalletTransaction, Payment, Refund, CashoutRequest
-from app.models.system import Notification, SystemSetting, AuditLog
+from app.models.finance import FareRule, Wallet, WalletTransaction, Payment, Refund, CashoutRequest, ProviderTransaction
+from app.models.system import Notification, DeviceToken, SystemSetting, AuditLog
 
 __all__ = [
     "Base",
@@ -27,7 +27,9 @@ __all__ = [
     "Payment",
     "Refund",
     "CashoutRequest",
+    "ProviderTransaction",
     "Notification",
+    "DeviceToken",
     "SystemSetting",
     "AuditLog",
 ]

@@ -1,66 +1,41 @@
-import React from 'react'
 import { render, screen } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
 import RouteCard from '../RouteCard'
-import { Itinerary } from '@/types/client'
+import { makeItinerary, makeLeg } from '@/tests/fixtures'
 
-describe('RouteCard component', () => {
-  it('renders simple props correctly', () => {
+describe('RouteCard', () => {
+  it('shows duration, fare, walking distance and the leg chain', () => {
     render(
       <RouteCard
-        title="Fastest"
-        eta="20 daqiqa"
-        price="2 000 so‘m"
-        walking="350 m"
-        transfers={0}
-        routeNumbers="15"
-      />
+        itinerary={makeItinerary({
+          title: 'Hamyonbop variant',
+          totalDurationMinutes: 25,
+          totalFareSoM: 2500,
+          totalWalkingMeters: 400,
+          legs: [makeLeg(), makeLeg({ id: 'leg-1', type: 'transit', routeNumber: '22', instruction: '22 ga chiqing' })],
+        })}
+      />,
     )
-    expect(screen.getByText('Fastest')).toBeTruthy()
-    expect(screen.getByText('20 daqiqa')).toBeTruthy()
-    expect(screen.getByText('2 000 so‘m')).toBeTruthy()
-    expect(screen.getByText(/350 m/i)).toBeTruthy()
+    expect(screen.getByText('Hamyonbop variant')).toBeInTheDocument()
+    expect(screen.getByText('25 daqiqa')).toBeInTheDocument()
+    expect(screen.getByText(/2.?500 so‘m/)).toBeInTheDocument()
+    expect(screen.getByText(/400 m/)).toBeInTheDocument()
+    expect(screen.getByText('22')).toBeInTheDocument()
   })
 
-  it('renders rich itinerary with neutral online vehicle status when count is 0', () => {
-    const mockItinerary: Itinerary = {
-      id: 'itn-1',
-      title: 'Hamyonbop variant',
-      mode: 'cheapest',
-      totalDurationMinutes: 25,
-      totalFareSoM: 2000,
-      totalWalkingMeters: 400,
-      transferCount: 1,
-      routeNumbers: ['7', '22'],
-      liveVehiclesCount: 0,
-      departureTime: '10:00',
-      arrivalTime: '10:25',
-      legs: []
-    }
-
-    render(<RouteCard itinerary={mockItinerary} />)
-    expect(screen.getByText('Hamyonbop variant')).toBeTruthy()
-    expect(screen.getByText(/Hozir online transport ko‘rinmayapti/i)).toBeTruthy()
-    expect(screen.getByText('25 daqiqa')).toBeTruthy()
+  it('says "no online vehicle visible" instead of hiding a route without live vehicles', () => {
+    render(<RouteCard itinerary={makeItinerary({ liveVehiclesCount: 0 })} />)
+    expect(screen.getByText(/Hozir online transport ko‘rinmayapti/i)).toBeInTheDocument()
   })
 
-  it('renders live online vehicle badge when count > 0', () => {
-    const mockItinerary: Itinerary = {
-      id: 'itn-2',
-      title: 'Tezkor',
-      mode: 'fastest',
-      totalDurationMinutes: 18,
-      totalFareSoM: 2000,
-      totalWalkingMeters: 200,
-      transferCount: 0,
-      routeNumbers: ['15'],
-      liveVehiclesCount: 4,
-      departureTime: '10:00',
-      arrivalTime: '10:18',
-      legs: []
-    }
+  it('shows the live vehicle badge when vehicles are online', () => {
+    render(<RouteCard itinerary={makeItinerary({ liveVehiclesCount: 4 })} />)
+    expect(screen.getByText(/4 ta mashina/i)).toBeInTheDocument()
+  })
 
-    render(<RouteCard itinerary={mockItinerary} />)
-    expect(screen.getByText(/4 ta mashina liniyada/i)).toBeTruthy()
+  it('never shows a price for walking-only trips and flags unknown tariffs', () => {
+    const { rerender } = render(<RouteCard itinerary={makeItinerary({ isWalkingOnly: true, routeNumbers: [], routeIds: [] })} />)
+    expect(screen.getByText('0 so‘m')).toBeInTheDocument()
+    rerender(<RouteCard itinerary={makeItinerary({ fareKnown: false })} />)
+    expect(screen.getByText('Tarif belgilanmagan')).toBeInTheDocument()
   })
 })

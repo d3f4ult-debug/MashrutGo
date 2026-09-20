@@ -1,353 +1,382 @@
-import { useState, useEffect } from 'react';
-import { adminApi } from '../../services/api/adminApi';
-import type { AdminSystemSettings } from '../../types/admin';
-import './AdminOperations.css';
-import '../uyushma/UyushmaOperations.css';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { adminApi, diffSettings, NUMERIC_SETTING_SPECS, validateSettings } from '../../services/api/adminApi'
+import { errorMessage } from '../../services/api/client'
+import { formatDateTime, formatSom } from '../../utils/format'
+import type { AdminSettingsValues, AdminSystemSettings, BooleanSettingKey, NumericSettingKey } from '../../types/admin'
+import { AdminModal, Alert, ErrorState, LoadingState, Toast, isAbortError, useToast } from './adminShared'
+import './AdminOperations.css'
+import '../uyushma/UyushmaOperations.css'
+
+interface NumericFieldMeta {
+  label: string
+  description: string
+  unit: string
+  step: number
+}
+
+const NUMERIC_FIELDS: Record<NumericSettingKey, NumericFieldMeta> = {
+  gps_interval_seconds: {
+    label: 'Haydovchi GPS yuborish intervali',
+    description: 'Haydovchi ilovasi joylashuvni necha soniyada bir yuboradi',
+    unit: 'soniya',
+    step: 1,
+  },
+  refund_window_minutes: {
+    label: 'To‘lovni qaytarish muddati',
+    description: 'Haydovchi qabul qilingan to‘lovni shu vaqt ichida qaytara oladi (0 = qaytarib bo‘lmaydi)',
+    unit: 'daqiqa',
+    step: 1,
+  },
+  platform_commission_percent: {
+    label: 'Platforma komissiyasi',
+    description: 'Har bir yo‘l haqi to‘lovidan ushlab qolinadigan ulush',
+    unit: '%',
+    step: 0.1,
+  },
+  max_unassigned_vehicles: {
+    label: 'Biriktirilmagan transportlar limiti',
+    description: 'Bitta Uyushmada yo‘nalishga biriktirilmagan transportlar soni chegarasi',
+    unit: 'ta',
+    step: 1,
+  },
+  min_topup_uzs: {
+    label: 'Minimal hamyon to‘ldirish summasi',
+    description: 'Mijoz bir martada to‘ldira oladigan eng kichik summa',
+    unit: 'so‘m',
+    step: 100,
+  },
+  max_topup_uzs: {
+    label: 'Maksimal hamyon to‘ldirish summasi',
+    description: 'Mijoz bir martada to‘ldira oladigan eng katta summa',
+    unit: 'so‘m',
+    step: 1000,
+  },
+}
+
+const BOOLEAN_FIELDS: Record<BooleanSettingKey, { label: string; description: string }> = {
+  fcm_notifications_enabled: {
+    label: 'Push bildirishnomalar (FCM)',
+    description: 'Haydovchi va yo‘lovchi ilovalariga push bildirishnomalar yuborish',
+  },
+  maintenance_mode: {
+    label: 'Texnik xizmat rejimi',
+    description: 'Yoqilganda yangi yo‘l haqi to‘lovlari va hamyonni to‘ldirish bloklanadi',
+  },
+}
+
+const SECTIONS: { title: string; icon: string; keys: NumericSettingKey[] }[] = [
+  { title: 'Telemetriya', icon: 'ri-map-pin-time-line', keys: ['gps_interval_seconds'] },
+  {
+    title: 'To‘lovlar va komissiya',
+    icon: 'ri-percent-line',
+    keys: ['platform_commission_percent', 'refund_window_minutes', 'min_topup_uzs', 'max_topup_uzs'],
+  },
+  { title: 'Uyushma limitlari', icon: 'ri-bus-2-line', keys: ['max_unassigned_vehicles'] },
+]
+
+type NumericDraft = Record<NumericSettingKey, string>
+
+const NUMERIC_KEYS = Object.keys(NUMERIC_SETTING_SPECS) as NumericSettingKey[]
+
+function toDraft(s: AdminSettingsValues): NumericDraft {
+  return NUMERIC_KEYS.reduce((acc, key) => ({ ...acc, [key]: String(s[key]) }), {} as NumericDraft)
+}
+
+function formatValue(key: keyof AdminSettingsValues, value: unknown): string {
+  if (typeof value === 'boolean') return value ? 'Yoqilgan' : 'O‘chirilgan'
+  if (key === 'min_topup_uzs' || key === 'max_topup_uzs') return formatSom(Number(value))
+  const meta = NUMERIC_FIELDS[key as NumericSettingKey]
+  return meta ? `${Number(value).toLocaleString('ru-RU')} ${meta.unit}` : String(value)
+}
+
+function labelOf(key: keyof AdminSettingsValues): string {
+  return NUMERIC_FIELDS[key as NumericSettingKey]?.label ?? BOOLEAN_FIELDS[key as BooleanSettingKey]?.label ?? key
+}
 
 export function AdminSettings() {
-  const [settings, setSettings] = useState<AdminSystemSettings | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
+  const { toast, show: showToast, hide: hideToast } = useToast()
 
-  // Form State
-  const [gpsInterval, setGpsInterval] = useState(5);
-  const [refundWindow, setRefundWindow] = useState(30);
-  const [commissionPercent, setCommissionPercent] = useState(1.0);
-  const [maxUnassignedVehicles, setMaxUnassignedVehicles] = useState(50);
-  const [maintenanceMode, setMaintenanceMode] = useState(false);
-  const [fcmNotifications, setFcmNotifications] = useState(true);
+  const [settings, setSettings] = useState<AdminSystemSettings | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
-  // Toast feedback
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [numbers, setNumbers] = useState<NumericDraft | null>(null)
+  const [flags, setFlags] = useState<Record<BooleanSettingKey, boolean> | null>(null)
 
-  const loadData = async () => {
-    setIsLoading(true);
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const applyServer = (s: AdminSystemSettings) => {
+    setSettings(s)
+    setNumbers(toDraft(s))
+    setFlags({ maintenance_mode: s.maintenance_mode, fcm_notifications_enabled: s.fcm_notifications_enabled })
+  }
+
+  const load = useCallback(async () => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setIsLoading(true)
+    setLoadError(null)
     try {
-      const data = await adminApi.getSystemSettings();
-      setSettings(data);
-      setGpsInterval(data.gps_interval_seconds);
-      setRefundWindow(data.refund_window_minutes);
-      setCommissionPercent(data.platform_commission_percent);
-      setMaxUnassignedVehicles(data.max_unassigned_vehicles || 50);
-      setMaintenanceMode(data.maintenance_mode);
-      setFcmNotifications(data.fcm_notifications_enabled);
-    } catch {
-      // Handled in adminApi fallback
+      const s = await adminApi.getSettings(controller.signal)
+      if (controller.signal.aborted) return
+      applyServer(s)
+    } catch (err) {
+      if (isAbortError(err) || controller.signal.aborted) return
+      setLoadError(errorMessage(err, 'Sozlamalarni yuklab bo‘lmadi'))
     } finally {
-      setIsLoading(false);
+      if (!controller.signal.aborted) setIsLoading(false)
     }
-  };
+  }, [])
 
   useEffect(() => {
-    loadData();
-  }, []);
+    load()
+    return () => abortRef.current?.abort()
+  }, [load])
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSaving(true);
+  const draft: AdminSettingsValues | null = useMemo(() => {
+    if (!numbers || !flags) return null
+    const parsed = NUMERIC_KEYS.reduce(
+      (acc, key) => ({ ...acc, [key]: numbers[key].trim() === '' ? Number.NaN : Number(numbers[key]) }),
+      {} as Record<NumericSettingKey, number>,
+    )
+    return { ...parsed, ...flags }
+  }, [numbers, flags])
+
+  const errors = useMemo(() => (draft ? validateSettings(draft) : {}), [draft])
+  const hasErrors = Object.keys(errors).length > 0
+  const changes = useMemo(() => (settings && draft ? diffSettings(settings, draft) : {}), [settings, draft])
+  const changedKeys = Object.keys(changes) as (keyof AdminSettingsValues)[]
+  const enablingMaintenance = changes.maintenance_mode === true
+
+  const resetDraft = () => {
+    if (settings) applyServer(settings)
+    setSaveError(null)
+  }
+
+  const handleSave = async () => {
+    if (!changedKeys.length || hasErrors) return
+    setIsSaving(true)
+    setSaveError(null)
     try {
-      const updated = await adminApi.updateSystemSettings({
-        gps_interval_seconds: Number(gpsInterval),
-        refund_window_minutes: Number(refundWindow),
-        platform_commission_percent: Number(commissionPercent),
-        max_unassigned_vehicles: Number(maxUnassignedVehicles),
-        maintenance_mode: maintenanceMode,
-        fcm_notifications_enabled: fcmNotifications,
-      });
-      setSettings(updated);
-      setToastMessage("Tizim global parametrlari muvaffaqiyatli saqlandi.");
-    } catch (err: any) {
-      alert("Sozlamalarni saqlashda xatolik: " + err.message);
+      const updated = await adminApi.updateSettings(changes)
+      applyServer(updated)
+      setConfirmOpen(false)
+      showToast(`${changedKeys.length} ta sozlama saqlandi va audit jurnaliga yozildi.`)
+    } catch (err) {
+      setSaveError(errorMessage(err, 'Sozlamalarni saqlab bo‘lmadi'))
     } finally {
-      setIsSaving(false);
+      setIsSaving(false)
     }
-  };
+  }
 
   return (
     <div className="admin-page-container">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div
-          style={{
-            position: 'fixed',
-            top: '1.5rem',
-            right: '1.5rem',
-            zIndex: 9999,
-            background: 'var(--surface-elevated)',
-            border: '1px solid var(--admin-accent)',
-            color: 'var(--text-primary)',
-            padding: '0.85rem 1.25rem',
-            borderRadius: 'var(--radius-lg)',
-            boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.75rem',
-          }}
-        >
-          <i className="ri-checkbox-circle-fill" style={{ color: 'var(--admin-accent)', fontSize: '1.25rem' }} />
-          <span>{toastMessage}</span>
-          <button
-            onClick={() => setToastMessage(null)}
-            style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', marginLeft: '0.5rem' }}
-          >
-            <i className="ri-close-line" />
-          </button>
-        </div>
-      )}
+      <Toast toast={toast} onClose={hideToast} />
 
-      {/* Page Header */}
       <div className="admin-page-header">
         <div className="admin-page-header__left">
           <h1>
             <i className="ri-settings-4-line" style={{ color: 'var(--admin-accent)' }} />
-            Tizim Global Sozlamalari
+            Tizim sozlamalari
           </h1>
-          <p>Butun platforma bo'yicha telemetriya, moliyaviy komissiya, push xabarlar va texnik xizmat rejimi</p>
+          <p>
+            {settings
+              ? settings.updated_at
+                ? `So‘nggi o‘zgartirish: ${formatDateTime(settings.updated_at)}${settings.updated_by ? ` • ${settings.updated_by}` : ''}`
+                : 'Hali o‘zgartirilmagan — standart qiymatlar amalda'
+              : 'Platforma bo‘yicha global parametrlar'}
+          </p>
         </div>
-
-        {settings && (
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-            So'nggi yangilanish: {new Date(settings.updated_at).toLocaleString('uz-UZ')} ({settings.updated_by})
-          </div>
-        )}
+        <div className="uyushma-page-header__actions">
+          <button type="button" className="btn-secondary-action" onClick={load} disabled={isLoading || isSaving}>
+            <i className={isLoading ? 'ri-loader-4-line admin-spin' : 'ri-refresh-line'} />
+            Qayta yuklash
+          </button>
+        </div>
       </div>
 
-      {isLoading ? (
-        <div style={{ padding: '4rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-          <i className="ri-loader-4-line ri-spin" style={{ fontSize: '2.5rem', color: 'var(--admin-accent)' }} />
-          <p style={{ marginTop: '0.75rem' }}>Sozlamalar yuklanmoqda...</p>
+      {!settings && isLoading ? (
+        <div className="admin-panel">
+          <LoadingState label="Sozlamalar yuklanmoqda..." />
+        </div>
+      ) : !settings || !numbers || !flags || !draft ? (
+        <div className="admin-panel">
+          <ErrorState message={loadError ?? 'Sozlamalarni yuklab bo‘lmadi'} onRetry={load} />
         </div>
       ) : (
-        <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: 860 }}>
-          {/* Telemetriya & GPS Sozlamalari */}
-          <div className="settings-section-card">
-            <h3>
-              <i className="ri-map-pin-time-line" style={{ color: 'var(--admin-accent)' }} />
-              Telemetriya va Jonli Geoxaritalash
-            </h3>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (changedKeys.length && !hasErrors) {
+              setSaveError(null)
+              setConfirmOpen(true)
+            }
+          }}
+          noValidate
+          style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 920 }}
+        >
+          {loadError && <Alert>Qayta yuklab bo‘lmadi: {loadError}</Alert>}
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
-              <div className="form-group">
-                <label>
-                  Haydovchi GPS uzatish davriyligi (soniya)
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', display: 'block', fontWeight: 'normal' }}>
-                    Tavsiya etiladi: 3-10 soniya oralig'ida
-                  </span>
-                </label>
-                <input
-                  type="number"
-                  min="2"
-                  max="60"
-                  value={gpsInterval}
-                  onChange={e => setGpsInterval(Number(e.target.value))}
-                  required
-                />
+          {settings.maintenance_mode && (
+            <Alert tone="warning">
+              <strong>Texnik xizmat rejimi hozir yoqilgan.</strong> Yangi yo‘l haqi to‘lovlari va hamyonni to‘ldirish qabul qilinmayapti.
+            </Alert>
+          )}
+
+          {SECTIONS.map((section) => (
+            <section key={section.title} className="settings-section-card">
+              <h3>
+                <i className={section.icon} style={{ color: 'var(--admin-accent)' }} />
+                {section.title}
+              </h3>
+              <div className="settings-grid">
+                {section.keys.map((key) => {
+                  const meta = NUMERIC_FIELDS[key]
+                  const spec = NUMERIC_SETTING_SPECS[key]
+                  const error = errors[key]
+                  const changed = key in changes
+                  return (
+                    <div key={key} className="uyushma-form-group">
+                      <label htmlFor={`setting-${key}`}>
+                        {meta.label} ({meta.unit})
+                        {changed && <span className="settings-changed-dot" title="O‘zgartirilgan, hali saqlanmagan" />}
+                      </label>
+                      <input
+                        id={`setting-${key}`}
+                        className={`uyushma-input${error ? ' invalid' : ''}`}
+                        type="number"
+                        inputMode={spec.integer ? 'numeric' : 'decimal'}
+                        min={spec.min}
+                        max={spec.max}
+                        step={meta.step}
+                        value={numbers[key]}
+                        onChange={(e) => setNumbers((n) => (n ? { ...n, [key]: e.target.value } : n))}
+                        aria-invalid={Boolean(error)}
+                        disabled={isSaving}
+                      />
+                      {error ? (
+                        <span className="admin-field-error">{error}</span>
+                      ) : (
+                        <span className="hint">
+                          {meta.description}. Ruxsat: {spec.min.toLocaleString('ru-RU')}–{spec.max.toLocaleString('ru-RU')}
+                          {changed && ` • hozirgi: ${formatValue(key, settings[key])}`}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
+            </section>
+          ))}
 
-              <div className="form-group">
-                <label>
-                  To'lovni bekor qilish (Refund) vaqti (daqiqa)
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', display: 'block', fontWeight: 'normal' }}>
-                    Haydovchi qabul qilgandan keyin ruxsat etilgan muddat
-                  </span>
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="120"
-                  value={refundWindow}
-                  onChange={e => setRefundWindow(Number(e.target.value))}
-                  required
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Moliya va Komissiya */}
-          <div className="settings-section-card">
-            <h3>
-              <i className="ri-percent-line" style={{ color: 'var(--admin-accent)' }} />
-              Platforma Komissiyasi va Moliyaviy Limitlar
-            </h3>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
-              <div className="form-group">
-                <label>
-                  Platforma komissiyasi (%)
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', display: 'block', fontWeight: 'normal' }}>
-                    Har bir qatnov to'lovidan avtomatik ushlab qolinadigan ulush
-                  </span>
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="20"
-                  value={commissionPercent}
-                  onChange={e => setCommissionPercent(Number(e.target.value))}
-                  required
-                />
-              </div>
-
-              <div className="form-group">
-                <label>
-                  Bitta uyushmaga ruxsat etilgan erkin mashinalar soni
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', display: 'block', fontWeight: 'normal' }}>
-                    Yo'nalishga biriktirilmagan zaxira transportlar limiti
-                  </span>
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="500"
-                  value={maxUnassignedVehicles}
-                  onChange={e => setMaxUnassignedVehicles(Number(e.target.value))}
-                  required
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Tizim Rejimlari va Integratsiyalar */}
-          <div className="settings-section-card">
+          <section className="settings-section-card">
             <h3>
               <i className="ri-shield-keyhole-line" style={{ color: 'var(--admin-accent)' }} />
-              Tizim Xavfsizligi va Rejimlari
+              Tizim rejimlari
             </h3>
-
-            <div className="settings-toggle-row">
-              <div>
-                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                  FCM Push Bildirishnomalari
+            {(Object.keys(BOOLEAN_FIELDS) as BooleanSettingKey[]).map((key) => (
+              <div key={key} className="settings-toggle-row">
+                <div>
+                  <div style={{ fontWeight: 600, color: key === 'maintenance_mode' && flags[key] ? 'var(--danger)' : 'var(--text-primary)' }}>
+                    {BOOLEAN_FIELDS[key].label}
+                    {key in changes && <span className="settings-changed-dot" title="O‘zgartirilgan, hali saqlanmagan" />}
+                  </div>
+                  <div className="admin-muted" style={{ fontSize: '0.8rem' }}>
+                    {BOOLEAN_FIELDS[key].description}
+                  </div>
                 </div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                  Haydovchi va yo'lovchi PWA/mobil ilovalariga avtomatik bildirishnomalar yuborish
-                </div>
-              </div>
-              <label className="switch" style={{ position: 'relative', display: 'inline-block', width: 46, height: 26 }}>
-                <input
-                  type="checkbox"
-                  checked={fcmNotifications}
-                  onChange={e => setFcmNotifications(e.target.checked)}
-                  style={{ opacity: 0, width: 0, height: 0 }}
-                />
-                <span
-                  style={{
-                    position: 'absolute',
-                    cursor: 'pointer',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    background: fcmNotifications ? 'var(--admin-accent)' : 'var(--surface-sunken)',
-                    borderRadius: 34,
-                    transition: '0.3s',
-                    border: '1px solid var(--border-subtle)',
-                  }}
-                >
-                  <span
-                    style={{
-                      position: 'absolute',
-                      content: '""',
-                      height: 18,
-                      width: 18,
-                      left: fcmNotifications ? 22 : 4,
-                      bottom: 3,
-                      background: 'white',
-                      borderRadius: '50%',
-                      transition: '0.3s',
-                    }}
+                <label className={`admin-switch${key === 'maintenance_mode' ? ' danger' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={flags[key]}
+                    onChange={(e) => setFlags((f) => (f ? { ...f, [key]: e.target.checked } : f))}
+                    disabled={isSaving}
+                    aria-label={BOOLEAN_FIELDS[key].label}
                   />
-                </span>
-              </label>
-            </div>
-
-            <div className="settings-toggle-row">
-              <div>
-                <div style={{ fontWeight: 600, color: maintenanceMode ? 'var(--danger)' : 'var(--text-primary)' }}>
-                  Texnik Xizmat Ko'rsatish Rejimi (Maintenance Mode)
-                </div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                  Yoqilganda mobil ilovalar va dispecher panellari faoliyatini vaqtinchalik to'xtatadi
-                </div>
+                  <span className="admin-switch__track" />
+                </label>
               </div>
-              <label className="switch" style={{ position: 'relative', display: 'inline-block', width: 46, height: 26 }}>
-                <input
-                  type="checkbox"
-                  checked={maintenanceMode}
-                  onChange={e => setMaintenanceMode(e.target.checked)}
-                  style={{ opacity: 0, width: 0, height: 0 }}
-                />
-                <span
-                  style={{
-                    position: 'absolute',
-                    cursor: 'pointer',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    background: maintenanceMode ? 'var(--danger)' : 'var(--surface-sunken)',
-                    borderRadius: 34,
-                    transition: '0.3s',
-                    border: '1px solid var(--border-subtle)',
-                  }}
-                >
-                  <span
-                    style={{
-                      position: 'absolute',
-                      content: '""',
-                      height: 18,
-                      width: 18,
-                      left: maintenanceMode ? 22 : 4,
-                      bottom: 3,
-                      background: 'white',
-                      borderRadius: '50%',
-                      transition: '0.3s',
-                    }}
-                  />
-                </span>
-              </label>
-            </div>
-
-            {maintenanceMode && (
-              <div className="dangerous-action-banner" style={{ marginTop: '0.5rem' }}>
+            ))}
+            {enablingMaintenance && (
+              <div className="dangerous-action-banner">
                 <i className="ri-alert-line" />
                 <div>
-                  <strong>DIQQAT:</strong> Texnik xizmat rejimi yoqilgan paytda yangi qatnovlar va to'lovlar qabul qilinmaydi! Faqat Super Admin hisoblari tizimga kira oladi.
+                  <strong>Diqqat:</strong> saqlangandan so‘ng barcha mijozlar uchun yo‘l haqi to‘lash va hamyonni to‘ldirish to‘xtaydi,
+                  toki rejim o‘chirilmaguncha. Kirish, GPS kuzatuv va jonli xarita ishlashda davom etadi.
                 </div>
               </div>
             )}
-          </div>
+          </section>
 
-          {/* Action Buttons */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-            <button
-              type="button"
-              className="btn-operations-secondary"
-              onClick={loadData}
-              disabled={isSaving}
-            >
-              Bekor qilish
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            {changedKeys.length > 0 && (
+              <span className="admin-muted">{changedKeys.length} ta o‘zgarish saqlanmagan</span>
+            )}
+            <button type="button" className="btn-secondary-action" onClick={resetDraft} disabled={isSaving || !changedKeys.length}>
+              O‘zgarishlarni bekor qilish
             </button>
-            <button
-              type="submit"
-              className="btn-admin-primary"
-              disabled={isSaving}
-              style={{ padding: '0.75rem 1.75rem', fontSize: '0.9rem' }}
-            >
-              {isSaving ? (
-                <>
-                  <i className="ri-loader-4-line ri-spin" /> Saqlanmoqda...
-                </>
-              ) : (
-                <>
-                  <i className="ri-save-3-line" /> Sozlamalarni Saqlash
-                </>
-              )}
+            <button type="submit" className="btn-admin-primary" disabled={isSaving || !changedKeys.length || hasErrors}>
+              <i className="ri-save-3-line" />
+              Saqlash
             </button>
           </div>
         </form>
       )}
+
+      {confirmOpen && settings && (
+        <AdminModal
+          title="Sozlamalarni saqlashni tasdiqlang"
+          icon={enablingMaintenance ? 'ri-alert-line' : 'ri-save-3-line'}
+          iconColor={enablingMaintenance ? 'var(--danger)' : undefined}
+          onClose={() => !isSaving && setConfirmOpen(false)}
+          busy={isSaving}
+          maxWidth={560}
+          onSubmit={handleSave}
+          footer={
+            <>
+              <button type="button" className="btn-secondary-action" onClick={() => setConfirmOpen(false)} disabled={isSaving}>
+                Orqaga
+              </button>
+              <button type="submit" className={enablingMaintenance ? 'btn-admin-danger' : 'btn-admin-primary'} disabled={isSaving}>
+                <i className={isSaving ? 'ri-loader-4-line admin-spin' : 'ri-check-line'} />
+                {isSaving ? 'Saqlanmoqda...' : 'Tasdiqlash va saqlash'}
+              </button>
+            </>
+          }
+        >
+          <p className="admin-muted" style={{ margin: 0 }}>
+            Quyidagi o‘zgarishlar butun platformaga darhol ta’sir qiladi va audit jurnaliga yoziladi.
+          </p>
+          <div className="uyushma-table-wrapper" style={{ boxShadow: 'none' }}>
+            <table className="uyushma-table">
+              <thead>
+                <tr>
+                  <th>Sozlama</th>
+                  <th>Hozirgi</th>
+                  <th>Yangi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {changedKeys.map((key) => (
+                  <tr key={key}>
+                    <td>{labelOf(key)}</td>
+                    <td className="admin-muted">{formatValue(key, settings[key])}</td>
+                    <td style={{ fontWeight: 700 }}>{formatValue(key, changes[key])}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {enablingMaintenance && (
+            <Alert tone="danger">Texnik xizmat rejimi yoqiladi: yangi to‘lovlar va hamyonni to‘ldirish darhol bloklanadi.</Alert>
+          )}
+          {saveError && <Alert>{saveError}</Alert>}
+        </AdminModal>
+      )}
     </div>
-  );
+  )
 }

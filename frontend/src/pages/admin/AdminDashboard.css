@@ -1,22 +1,72 @@
-.admin-dashboard {
+/* Super Admin dashboard (AdminDashboard.tsx) */
+
+.admin-kpi-card--link {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.admin-kpi-card--link:focus-visible {
+  outline: 2px solid var(--admin-accent);
+  outline-offset: 2px;
+}
+
+.admin-kpi-card__value small {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.admin-quick-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.75rem;
+}
+
+.admin-quick-link {
+  justify-content: center;
+  padding: 0.85rem;
+  text-decoration: none;
+}
+
+.admin-dashboard-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr));
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.admin-audit-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 1.25rem 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
 }
 
-.admin-dashboard__header h1 {
-  font-size: 1.375rem;
-  font-weight: 700;
-  margin: 0 0 0.25rem;
-  color: var(--text-primary);
+.admin-audit-feed li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-.admin-dashboard__header p {
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
-  margin: 0;
+.admin-audit-feed li:last-child {
+  border-bottom: none;
 }
 
-.kpi-card--admin:hover {
-  border-color: var(--admin-accent-subtle);
+.admin-audit-feed time {
+  white-space: nowrap;
+}
+
+.admin-inline-link {
+  color: var(--admin-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.admin-inline-link:hover {
+  text-decoration: underline;
 }

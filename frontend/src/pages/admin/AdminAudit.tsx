@@ -1,235 +1,385 @@
-import { useState, useEffect } from 'react';
-import { adminApi } from '../../services/api/adminApi';
-import type { AuditLogEntry } from '../../types/admin';
-import './AdminOperations.css';
-import '../uyushma/UyushmaOperations.css';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { adminApi } from '../../services/api/adminApi'
+import { errorMessage } from '../../services/api/client'
+import { useUyushmaScope } from '../../contexts/UyushmaScopeContext'
+import { formatDateTime, timeAgo } from '../../utils/format'
+import type { AuditLogEntry, AuditLogFilters, Paginated } from '../../types/admin'
+import {
+  AUDIT_TARGET_TYPES,
+  Alert,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  Pagination,
+  auditActionLabel,
+  auditActionTone,
+  isAbortError,
+  roleLabel,
+  targetTypeLabel,
+  useDebounced,
+} from './adminShared'
+import './AdminOperations.css'
+import '../uyushma/UyushmaOperations.css'
+
+const PAGE_SIZE = 50
+
+const ACTION_PRESETS: { value: string; label: string }[] = [
+  { value: 'uyushma.', label: 'Uyushmalar' },
+  { value: 'client.', label: 'Mijozlar' },
+  { value: 'wallet.', label: 'Hamyonlar' },
+  { value: 'shift.', label: 'Smenalar' },
+  { value: 'settings.', label: 'Sozlamalar' },
+  { value: 'route.', label: 'Yo‘nalishlar' },
+  { value: 'payment.', label: 'To‘lovlar' },
+  { value: 'cashout.', label: 'Pul yechish' },
+  { value: 'user.', label: 'Kirishlar' },
+]
+
+interface OldNew {
+  old: unknown
+  new: unknown
+}
+
+function isOldNewMap(changes: unknown): changes is Record<string, OldNew> {
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return false
+  const values = Object.values(changes as Record<string, unknown>)
+  return (
+    values.length > 0 &&
+    values.every((v) => v !== null && typeof v === 'object' && !Array.isArray(v) && 'old' in (v as object) && 'new' in (v as object))
+  )
+}
+
+function show(value: unknown): string {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'string') return value
+  return JSON.stringify(value)
+}
+
+function prettyJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function hasChanges(changes: unknown): boolean {
+  if (changes === null || changes === undefined) return false
+  if (typeof changes === 'object') return Object.keys(changes as object).length > 0
+  return true
+}
 
 export function AdminAudit() {
-  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [actionCategory, setActionCategory] = useState<'all' | 'uyushma' | 'client' | 'shift' | 'settings'>('all');
-  const [isLoading, setIsLoading] = useState(true);
+  const { options: uyushmaOptions } = useUyushmaScope()
 
-  const loadData = async () => {
-    setIsLoading(true);
+  const [actionInput, setActionInput] = useState('')
+  const action = useDebounced(actionInput.trim(), 400)
+  const [targetType, setTargetType] = useState('')
+  const [uyushmaId, setUyushmaId] = useState('')
+  const [actorInput, setActorInput] = useState('')
+  const actorId = useDebounced(actorInput.trim(), 400)
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+
+  const filterKey = JSON.stringify([action, targetType, uyushmaId, actorId, dateFrom, dateTo])
+  const [pageState, setPageState] = useState({ key: filterKey, page: 1 })
+  const page = pageState.key === filterKey ? pageState.page : 1
+
+  const [data, setData] = useState<Paginated<AuditLogEntry> | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  const abortRef = useRef<AbortController | null>(null)
+
+  const rangeError = dateFrom && dateTo && dateFrom > dateTo ? '“Dan” sanasi “gacha” sanasidan keyin bo‘lmasligi kerak' : null
+  const actorError = actorId && !/^\d+$/.test(actorId) ? 'Ijrochi ID faqat raqam bo‘lishi kerak' : null
+
+  const filters: AuditLogFilters = useMemo(
+    () => ({
+      action: action || undefined,
+      target_type: targetType || undefined,
+      uyushma_id: uyushmaId || undefined,
+      actor_user_id: actorId || undefined,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
+      page,
+      size: PAGE_SIZE,
+    }),
+    [action, targetType, uyushmaId, actorId, dateFrom, dateTo, page],
+  )
+
+  const load = useCallback(async (f: AuditLogFilters) => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setIsLoading(true)
+    setLoadError(null)
     try {
-      const data = await adminApi.getAuditLogs();
-      setLogs(data);
-    } catch {
-      // Handled in adminApi fallback
+      const result = await adminApi.getAuditLogs(f, controller.signal)
+      if (controller.signal.aborted) return
+      setData(result)
+      setExpanded(new Set())
+    } catch (err) {
+      if (isAbortError(err) || controller.signal.aborted) return
+      setLoadError(errorMessage(err, 'Audit jurnalini yuklab bo‘lmadi'))
     } finally {
-      setIsLoading(false);
+      if (!controller.signal.aborted) setIsLoading(false)
     }
-  };
+  }, [])
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (rangeError || actorError) return
+    load(filters)
+  }, [load, filters, rangeError, actorError])
 
-  const getActionBadgeClass = (action: AuditLogEntry['action_type']) => {
-    switch (action) {
-      case 'create_uyushma':
-        return 'audit-badge create';
-      case 'archive_uyushma':
-      case 'block_client':
-      case 'force_end_shift':
-        return 'audit-badge archive';
-      case 'unblock_client':
-        return 'audit-badge create';
-      case 'update_system_settings':
-        return 'audit-badge settings';
-      default:
-        return 'audit-badge';
-    }
-  };
+  useEffect(() => () => abortRef.current?.abort(), [])
 
-  const formatActionName = (action: AuditLogEntry['action_type']) => {
-    switch (action) {
-      case 'create_uyushma':
-        return 'Uyushma yaratish';
-      case 'archive_uyushma':
-        return 'Uyushmani arxivlash';
-      case 'block_client':
-        return 'Mijozni bloklash';
-      case 'unblock_client':
-        return 'Blokdan chiqarish';
-      case 'force_end_shift':
-        return 'Smenani to\'xtatish';
-      case 'update_system_settings':
-        return 'Sozlamalarni yangilash';
-      case 'reject_cashout':
-        return 'Cashout rad etish';
-      case 'refund_payment':
-        return 'To\'lovni qaytarish';
-      default:
-        return action;
-    }
-  };
+  const toggle = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
 
-  const filteredLogs = logs.filter(log => {
-    const query = searchQuery.toLowerCase();
-    const matchesSearch =
-      log.actor_name.toLowerCase().includes(query) ||
-      log.description.toLowerCase().includes(query) ||
-      log.entity_id.toLowerCase().includes(query) ||
-      (log.audit_reason || '').toLowerCase().includes(query);
+  const hasFilters = Boolean(actionInput || targetType || uyushmaId || actorInput || dateFrom || dateTo)
+  const clearFilters = () => {
+    setActionInput('')
+    setTargetType('')
+    setUyushmaId('')
+    setActorInput('')
+    setDateFrom('')
+    setDateTo('')
+  }
 
-    let matchesCategory = true;
-    if (actionCategory === 'uyushma') {
-      matchesCategory = log.entity_type === 'uyushma';
-    } else if (actionCategory === 'client') {
-      matchesCategory = log.entity_type === 'client';
-    } else if (actionCategory === 'shift') {
-      matchesCategory = log.entity_type === 'shift';
-    } else if (actionCategory === 'settings') {
-      matchesCategory = log.entity_type === 'settings';
-    }
-
-    return matchesSearch && matchesCategory;
-  });
+  const items = data?.items ?? []
 
   return (
     <div className="admin-page-container">
-      {/* Page Header */}
       <div className="admin-page-header">
         <div className="admin-page-header__left">
           <h1>
             <i className="ri-shield-check-line" style={{ color: 'var(--admin-accent)' }} />
-            Tizim Audit va Xavfsizlik Jurnali
+            Audit jurnali
           </h1>
-          <p>Barcha ma'muriy amallar, xavfli qarorlar va o'zgarishlarning o'zgarmas (immutable) arxivi</p>
+          <p>Ma’muriy, moliyaviy va xavfsizlik amallarining o‘zgarmas tarixi</p>
         </div>
-
-        <button
-          className="btn-operations-secondary"
-          onClick={loadData}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
-        >
-          <i className="ri-refresh-line" /> Yangilash
-        </button>
+        <div className="uyushma-page-header__actions">
+          <button type="button" className="btn-secondary-action" onClick={() => load(filters)} disabled={isLoading || Boolean(rangeError || actorError)}>
+            <i className={isLoading ? 'ri-loader-4-line admin-spin' : 'ri-refresh-line'} />
+            Yangilash
+          </button>
+        </div>
       </div>
 
-      {/* Filter Bar */}
-      <div className="operations-filter-bar">
-        <div className="operations-filter-bar__search">
-          <i className="ri-search-line" />
+      <div className="admin-filter-bar">
+        <label className="admin-field" style={{ flex: '1 1 220px' }}>
+          <span>Amal</span>
           <input
-            type="text"
-            placeholder="Ma'mur, amal tavsifi, sabab yoki ob'ekt ID bo'yicha qidiruv..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
+            className="uyushma-input admin-mono"
+            type="search"
+            placeholder="masalan: client.block yoki wallet."
+            value={actionInput}
+            maxLength={100}
+            onChange={(e) => setActionInput(e.target.value)}
           />
-        </div>
-
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button
-            className={`finance-tab ${actionCategory === 'all' ? 'active' : ''}`}
-            onClick={() => setActionCategory('all')}
-          >
-            Hammasi ({logs.length})
+        </label>
+        <label className="admin-field">
+          <span>Obyekt turi</span>
+          <select className="uyushma-select" value={targetType} onChange={(e) => setTargetType(e.target.value)}>
+            <option value="">Barchasi</option>
+            {AUDIT_TARGET_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label} ({t.value})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="admin-field">
+          <span>Uyushma</span>
+          <select className="uyushma-select" value={uyushmaId} onChange={(e) => setUyushmaId(e.target.value)}>
+            <option value="">Barchasi</option>
+            {uyushmaOptions.map((u) => (
+              <option key={u.id} value={String(u.id)}>
+                {u.name}
+                {u.status !== 'active' ? ' (arxiv)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="admin-field" style={{ width: 110 }}>
+          <span>Ijrochi ID</span>
+          <input
+            className={`uyushma-input${actorError ? ' invalid' : ''}`}
+            inputMode="numeric"
+            value={actorInput}
+            onChange={(e) => setActorInput(e.target.value)}
+            placeholder="#"
+            style={{ minWidth: 0 }}
+          />
+        </label>
+        <label className="admin-field">
+          <span>Sanadan</span>
+          <input className={`uyushma-input${rangeError ? ' invalid' : ''}`} type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} />
+        </label>
+        <label className="admin-field">
+          <span>Sanagacha</span>
+          <input className={`uyushma-input${rangeError ? ' invalid' : ''}`} type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} />
+        </label>
+        {hasFilters && (
+          <button type="button" className="btn-secondary-action" onClick={clearFilters}>
+            <i className="ri-filter-off-line" /> Tozalash
           </button>
-          <button
-            className={`finance-tab ${actionCategory === 'uyushma' ? 'active' : ''}`}
-            onClick={() => setActionCategory('uyushma')}
-          >
-            Uyushmalar
-          </button>
-          <button
-            className={`finance-tab ${actionCategory === 'client' ? 'active' : ''}`}
-            onClick={() => setActionCategory('client')}
-          >
-            Mijozlar
-          </button>
-          <button
-            className={`finance-tab ${actionCategory === 'shift' ? 'active' : ''}`}
-            onClick={() => setActionCategory('shift')}
-          >
-            Smenalar
-          </button>
-          <button
-            className={`finance-tab ${actionCategory === 'settings' ? 'active' : ''}`}
-            onClick={() => setActionCategory('settings')}
-          >
-            Sozlamalar
-          </button>
-        </div>
+        )}
       </div>
 
-      {/* Logs Table */}
-      <div className="operations-table-card">
-        {isLoading ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-            <i className="ri-loader-4-line ri-spin" style={{ fontSize: '2rem', color: 'var(--admin-accent)' }} />
-            <p style={{ marginTop: '0.5rem' }}>Audit jurnali yuklanmoqda...</p>
-          </div>
-        ) : filteredLogs.length === 0 ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
-            <i className="ri-file-search-line" style={{ fontSize: '2.5rem', opacity: 0.5 }} />
-            <p style={{ marginTop: '0.5rem' }}>Mos keluvchi audit yozuvlari topilmadi</p>
-          </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+        {ACTION_PRESETS.map((p) => (
+          <button
+            key={p.value}
+            type="button"
+            className={`btn-admin-chip${actionInput === p.value ? ' accent' : ''}`}
+            onClick={() => setActionInput(actionInput === p.value ? '' : p.value)}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {(rangeError || actorError) && <Alert tone="warning">{rangeError ?? actorError}</Alert>}
+      {loadError && data && <Alert>Jurnalni yangilab bo‘lmadi: {loadError}</Alert>}
+
+      <div className="admin-panel">
+        {!data && isLoading ? (
+          <LoadingState label="Audit jurnali yuklanmoqda..." />
+        ) : !data ? (
+          <ErrorState message={loadError ?? 'Audit jurnalini yuklab bo‘lmadi'} onRetry={() => load(filters)} />
+        ) : items.length === 0 ? (
+          <EmptyState
+            icon="ri-file-search-line"
+            title={hasFilters ? 'Filtrlarga mos audit yozuvi topilmadi' : 'Audit jurnali hozircha bo‘sh'}
+          />
         ) : (
-          <div className="operations-table-wrap">
-            <table className="operations-table">
-              <thead>
-                <tr>
-                  <th>Vaqt</th>
-                  <th>Amal Turi</th>
-                  <th>Ijrochi (Ma'mur)</th>
-                  <th>Ob'ekt</th>
-                  <th>Tavsif va Sabab</th>
-                  <th>IP Manzil</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLogs.map(log => (
-                  <tr key={log.id}>
-                    <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                      <div>{new Date(log.timestamp).toLocaleDateString('uz-UZ', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
-                      <div style={{ color: 'var(--text-tertiary)', fontSize: '0.725rem' }}>
-                        {new Date(log.timestamp).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                      </div>
-                    </td>
-                    <td>
-                      <span className={getActionBadgeClass(log.action_type)}>
-                        {formatActionName(log.action_type)}
-                      </span>
-                    </td>
-                    <td>
-                      <div>
-                        <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.85rem' }}>
-                          {log.actor_name}
-                        </div>
-                        <div style={{ display: 'inline-block', fontSize: '0.7rem', color: 'var(--admin-accent)', background: 'var(--admin-accent-subtle)', padding: '0.1rem 0.4rem', borderRadius: '4px', marginTop: '0.2rem' }}>
-                          {log.actor_role}
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'var(--surface-sunken)', padding: '0.2rem 0.45rem', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
-                        {log.entity_type}:{log.entity_id}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ color: 'var(--text-primary)', fontSize: '0.85rem' }}>
-                        {log.description}
-                      </div>
-                      {log.audit_reason && (
-                        <div style={{ marginTop: '0.35rem', background: 'rgba(239, 68, 68, 0.08)', borderLeft: '3px solid var(--danger)', padding: '0.3rem 0.6rem', borderRadius: '0 4px 4px 0', fontSize: '0.78rem', color: '#fca5a5' }}>
-                          <span style={{ fontWeight: 600, marginRight: '0.3rem' }}>Sabab:</span>
-                          "{log.audit_reason}"
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: 'var(--text-tertiary)' }}>
-                      {log.ip_address || '127.0.0.1'}
-                    </td>
+          <>
+            <div className="uyushma-table-wrapper">
+              <table className="uyushma-table">
+                <thead>
+                  <tr>
+                    <th>Vaqt</th>
+                    <th>Amal</th>
+                    <th>Ijrochi</th>
+                    <th>Obyekt</th>
+                    <th>Sabab</th>
+                    <th>IP</th>
+                    <th aria-label="O‘zgarishlar" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody style={{ opacity: isLoading ? 0.6 : 1 }}>
+                  {items.map((log) => {
+                    const isOpen = expanded.has(log.id)
+                    const withChanges = hasChanges(log.changes)
+                    return (
+                      <Fragment key={log.id}>
+                        <tr className={isOpen ? 'audit-row--expanded' : undefined}>
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            <div style={{ fontSize: '0.8rem' }}>{formatDateTime(log.created_at)}</div>
+                            <div className="admin-muted">{timeAgo(log.created_at)}</div>
+                          </td>
+                          <td>
+                            <span className={`audit-badge ${auditActionTone(log.action)}`}>{auditActionLabel(log.action)}</span>
+                            <div className="admin-muted admin-mono" style={{ marginTop: '0.25rem' }}>
+                              {log.action}
+                            </div>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{log.actor_name ?? (log.actor_user_id ? `Foydalanuvchi #${log.actor_user_id}` : 'Tizim')}</div>
+                            <div className="admin-muted">
+                              {roleLabel(log.actor_role)}
+                              {log.actor_user_id ? ` • #${log.actor_user_id}` : ''}
+                            </div>
+                          </td>
+                          <td>
+                            {log.target_type ? (
+                              <>
+                                <div style={{ fontSize: '0.82rem' }}>{targetTypeLabel(log.target_type)}</div>
+                                <div className="admin-muted admin-mono">
+                                  {log.target_type}
+                                  {log.target_id ? `:${log.target_id}` : ''}
+                                </div>
+                              </>
+                            ) : (
+                              <span className="admin-muted">—</span>
+                            )}
+                            {log.uyushma_id && (
+                              <div className="admin-muted">
+                                Uyushma: {uyushmaOptions.find((u) => String(u.id) === log.uyushma_id)?.name ?? `#${log.uyushma_id}`}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ maxWidth: 260 }}>
+                            {log.reason ? <div className="audit-reason" style={{ marginTop: 0 }}>{log.reason}</div> : <span className="admin-muted">—</span>}
+                          </td>
+                          <td className="admin-muted admin-mono">{log.ip_address ?? '—'}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            {withChanges && (
+                              <button
+                                type="button"
+                                className="btn-admin-chip"
+                                onClick={() => toggle(log.id)}
+                                aria-expanded={isOpen}
+                              >
+                                <i className={isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+                                O‘zgarishlar
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                        {isOpen && withChanges && (
+                          <tr className="audit-row--expanded">
+                            <td colSpan={7} className="audit-details-cell">
+                              {isOldNewMap(log.changes) && (
+                                <table className="uyushma-table" style={{ marginBottom: '0.75rem' }}>
+                                  <thead>
+                                    <tr>
+                                      <th>Maydon</th>
+                                      <th>Oldin</th>
+                                      <th>Keyin</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {Object.entries(log.changes).map(([field, diff]) => (
+                                      <tr key={field}>
+                                        <td className="admin-mono">{field}</td>
+                                        <td className="admin-muted admin-mono">{show(diff.old)}</td>
+                                        <td className="admin-mono" style={{ fontWeight: 700 }}>
+                                          {show(diff.new)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                              <pre className="admin-json">{prettyJson(log.changes)}</pre>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <Pagination
+              page={data.page}
+              pages={data.pages}
+              total={data.total}
+              size={data.size}
+              disabled={isLoading}
+              onPage={(p) => setPageState({ key: filterKey, page: p })}
+            />
+          </>
         )}
       </div>
     </div>
-  );
+  )
 }

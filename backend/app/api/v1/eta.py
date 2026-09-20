@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db
+from app.api.deps import get_db_dep
 from app.schemas.eta import ETAResponse
 from app.services.routing.eta_service import eta_service
 
@@ -14,11 +14,11 @@ router = APIRouter(prefix="/routing", tags=["routing"])
 @router.get("/eta", response_model=ETAResponse)
 def get_live_eta(
     route_id: int = Query(..., description="ID of route"),
-    direction: str = Query("outbound", description="'outbound' or 'inbound'"),
-    stop_lat: float = Query(..., description="Boarding stop latitude"),
-    stop_lng: float = Query(..., description="Boarding stop longitude"),
-    stop_name: Optional[str] = Query(None, description="Optional stop name"),
-    db: Session = Depends(get_db),
+    direction: str = Query("outbound", pattern="^(outbound|inbound)$"),
+    stop_lat: float = Query(..., ge=-90, le=90, description="Boarding stop latitude"),
+    stop_lng: float = Query(..., ge=-180, le=180, description="Boarding stop longitude"),
+    stop_name: Optional[str] = Query(None, max_length=150, description="Optional stop name"),
+    db: Session = Depends(get_db_dep),
 ):
     """
     Calculate real-time map-matched ETA to a specific boarding stop.

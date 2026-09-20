@@ -208,3 +208,262 @@
   font-size: 1.1rem;
   flex-shrink: 0;
 }
+
+/* ── Period / status chips ── */
+.fin-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 0.25rem;
+}
+
+.fin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.fin-chip:hover {
+  color: var(--text-primary);
+}
+
+.fin-chip.active {
+  background: var(--accent-subtle);
+  color: var(--accent-primary);
+}
+
+.fin-chip__count {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 9999px;
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+/* ── Status pills ── */
+.fin-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  font-size: 0.725rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.fin-pill--success { background: var(--success-subtle); color: var(--success); }
+.fin-pill--warning { background: var(--warning-subtle); color: var(--warning); }
+.fin-pill--danger { background: var(--danger-subtle); color: var(--danger); }
+.fin-pill--info { background: var(--info-subtle); color: var(--info); }
+
+/* ── Table helpers ── */
+.fin-mono {
+  font-family: monospace;
+  font-size: 0.8rem;
+}
+
+.fin-sub {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+
+.fin-link {
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+
+.fin-link:hover {
+  text-decoration: underline;
+}
+
+.fin-nowrap {
+  white-space: nowrap;
+}
+
+.fin-amount {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.fin-amount--in { color: var(--success); }
+
+.fin-amount--void {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+
+.fin-table-state {
+  text-align: center;
+  padding: 2.25rem 1rem !important;
+  color: var(--text-tertiary) !important;
+}
+
+.fin-table-state i {
+  font-size: 1.5rem;
+  color: var(--accent-primary);
+}
+
+.fin-tbody--loading {
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+
+.fin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.75rem 1.1rem;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.fin-pagination__controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.fin-pagination__controls .btn-secondary-action {
+  padding: 0.35rem 0.6rem;
+}
+
+/* ── Alerts, empty state, toast ── */
+.fin-alert {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--danger-subtle);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-md);
+  padding: 0.65rem 0.85rem;
+  color: var(--danger);
+  font-size: 0.825rem;
+}
+
+.fin-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 3rem 1rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.fin-empty i {
+  font-size: 2rem;
+  color: var(--text-tertiary);
+}
+
+.fin-toast {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 1100;
+  max-width: min(420px, calc(100vw - 2.5rem));
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-medium);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.fin-toast p {
+  margin: 0;
+  flex: 1;
+  line-height: 1.4;
+}
+
+.fin-toast > i {
+  font-size: 1.2rem;
+}
+
+.fin-toast--success > i { color: var(--success); }
+.fin-toast--error { border-color: rgba(239, 68, 68, 0.45); }
+.fin-toast--error > i { color: var(--danger); }
+
+.fin-toast button {
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+/* ── Summary tab & dialog ── */
+.fin-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.25rem;
+}
+
+.fin-card-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0 0 0.75rem;
+}
+
+.fin-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  font-size: 0.85rem;
+}
+
+.fin-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.fin-row > span:first-child {
+  color: var(--text-secondary);
+}
+
+.fin-row--total {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0.6rem;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.fin-row--total > span:first-child {
+  color: var(--text-primary);
+}
+
+.fin-dialog-summary {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 0.9rem;
+}
+
+.fin-dialog-summary__amount {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin: 0.15rem 0;
+}

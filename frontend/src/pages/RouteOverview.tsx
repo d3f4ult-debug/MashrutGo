@@ -1,56 +1,41 @@
-import React, { useCallback } from 'react'
-import { useParams } from 'react-router-dom'
-import { getRouteByNumber } from '@/services/routing/routingService'
-import AppMap from '@/components/map/AppMap'
-import { drawPolyline, addMarker, fitBoundsToCoordinates } from '@/services/map/maptiler'
+import { useEffect, useState } from 'react'
+import { Link, Navigate, useParams } from 'react-router-dom'
+import { clientApi } from '@/services/api/clientApi'
+import { errorMessage } from '@/services/api/client'
+import type { RouteListItem } from '@/types/client'
 
+/** Legacy `/overview/:number` links: resolve the route number to its id and redirect. */
 export default function RouteOverview() {
-  const { number } = useParams()
-  const route = number ? getRouteByNumber(number) : null
+  const { number = '' } = useParams()
+  const [matches, setMatches] = useState<RouteListItem[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  const handleMapReady = useCallback((map: any) => {
-    if (!route) return
-    try {
-      // draw route geometry
-      if (route.geometry && route.geometry.length > 0) {
-        drawPolyline(map, `route-${route.routeNumber}`, route.geometry as any)
-      }
-      // draw stops
-      route.stops.forEach((s) => {
-        addMarker(map, `stop-${s.id}`, s.coordinates as [number, number], { label: s.name })
-      })
-      // fit to route bounds
-      if (route.geometry && route.geometry.length > 0) {
-        fitBoundsToCoordinates(map, route.geometry as any)
-      }
-    } catch (e) {
-      // ignore map draw errors
-    }
-  }, [route])
+  useEffect(() => {
+    clientApi
+      .listRoutes(number)
+      .then((list) => setMatches(list.filter((r) => r.routeNumber.toLowerCase() === number.toLowerCase())))
+      .catch((err) => setError(errorMessage(err)))
+  }, [number])
 
-  if (!route) {
-    return (
-      <div>
-        <h2>Yo‘nalish topilmadi</h2>
-      </div>
-    )
-  }
+  if (error) return <div className="p-4 text-sm text-red-600">{error}</div>
+  if (matches === null) return <div className="p-4 text-sm text-neutral-500">Yuklanmoqda…</div>
+  if (matches.length === 1) return <Navigate to={`/route/${matches[0].id}`} replace />
 
   return (
-    <div className="p-4">
-      <h2 className="text-lg font-bold">{route.name}</h2>
-      <p className="text-sm text-neutral-600">{route.originName} → {route.destinationName}</p>
-      <div className="mt-3 text-sm">
-        <div>Fare: {route.fareSoM.toLocaleString('uz-UZ')} so‘m</div>
-        <div>Interval: {route.intervalMinutes} min</div>
-        <div>Active vehicles: {route.activeVehiclesCount}</div>
-        <div>Parked vehicles: {route.parkedVehiclesCount}</div>
-        <div>Stops: {route.stops.length}</div>
-      </div>
-
-      <div className="mt-4 rounded-lg overflow-hidden border border-neutral-200">
-        <AppMap onMapReady={handleMapReady} />
-      </div>
+    <div className="p-4 space-y-3">
+      <h2 className="text-lg font-bold">{number}-raqamli marshrut</h2>
+      {matches.length === 0 ? (
+        <p className="text-sm text-neutral-600">Bunday raqamli chop etilgan marshrut topilmadi.</p>
+      ) : (
+        matches.map((r) => (
+          <Link key={r.id} to={`/route/${r.id}`} className="block p-3 rounded-xl border border-neutral-200 hover:border-blue-300">
+            <div className="font-semibold text-sm">{r.name}</div>
+            <div className="text-xs text-neutral-500">
+              {r.originName} → {r.destinationName}
+            </div>
+          </Link>
+        ))
+      )}
     </div>
   )
 }

@@ -1,17 +1,20 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useUyushmaScope } from '../../contexts/UyushmaScopeContext';
 import { uyushmaApi } from '../../services/api/uyushmaApi';
+import { errorMessage } from '../../services/api/client';
+import { formatSom } from '../../utils/format';
 import type { UyushmaFareRule, UyushmaRoute, FareRuleType } from '../../types/uyushma';
 import './UyushmaOperations.css';
 
 export function UyushmaFares() {
-  const { user } = useAuth();
-  const uyushmaId = user?.uyushma_id || 'uyushma-01';
+  const { uyushmaId: scopedUyushmaId } = useUyushmaScope();
+  const uyushmaId = scopedUyushmaId ?? '';
 
   const [fares, setFares] = useState<UyushmaFareRule[]>([]);
   const [routes, setRoutes] = useState<UyushmaRoute[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -25,29 +28,51 @@ export function UyushmaFares() {
   const [includedKm, setIncludedKm] = useState<number>(3);
   const [crossZoneExtra, setCrossZoneExtra] = useState<number>(1000);
   const [peakMultiplier, setPeakMultiplier] = useState<number>(1.25);
+  // Peak window, matching the backend default (07:00–10:00) when a rule does not set one
+  const [peakStartHour, setPeakStartHour] = useState<number>(7);
+  const [peakEndHour, setPeakEndHour] = useState<number>(10);
   const [targetRouteId, setTargetRouteId] = useState('');
   const [description, setDescription] = useState('');
   const [isActive, setIsActive] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const loadData = async () => {
+  // A Super Admin can switch uyushma mid-load: the answer of an abandoned scope must be ignored
+  const activeScope = useRef(uyushmaId);
+  activeScope.current = uyushmaId;
+
+  const loadData = useCallback(async () => {
+    if (!uyushmaId) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
+    setLoadError(null);
     try {
       const [faresData, routesData] = await Promise.all([
         uyushmaApi.getFareRules(uyushmaId),
         uyushmaApi.getRoutes(uyushmaId),
       ]);
+      if (activeScope.current !== uyushmaId) return;
       setFares(faresData);
       setRoutes(routesData);
-    } catch {
-      // Fallback
+    } catch (err) {
+      if (activeScope.current !== uyushmaId) return;
+      setLoadError(errorMessage(err, "Tariflarni yuklab bo'lmadi"));
     } finally {
-      setIsLoading(false);
+      if (activeScope.current === uyushmaId) setIsLoading(false);
     }
-  };
+  }, [uyushmaId]);
 
   useEffect(() => {
-    loadData();
+    void loadData();
+  }, [loadData]);
+
+  // Never leave a form open over a rule that belongs to the uyushma we just left
+  useEffect(() => {
+    setIsModalOpen(false);
+    setEditingFare(null);
+    setFormError(null);
   }, [uyushmaId]);
 
   const openCreateModal = () => {
@@ -59,6 +84,8 @@ export function UyushmaFares() {
     setIncludedKm(3);
     setCrossZoneExtra(1000);
     setPeakMultiplier(1.25);
+    setPeakStartHour(7);
+    setPeakEndHour(10);
     setTargetRouteId('');
     setDescription('');
     setIsActive(true);
@@ -75,6 +102,8 @@ export function UyushmaFares() {
     setIncludedKm(f.included_km || 3);
     setCrossZoneExtra(f.cross_zone_extra || 1000);
     setPeakMultiplier(f.peak_multiplier || 1.25);
+    setPeakStartHour(f.peak_start_hour ?? 7);
+    setPeakEndHour(f.peak_end_hour ?? 10);
     setTargetRouteId(f.target_route_id || '');
     setDescription(f.description || '');
     setIsActive(f.is_active);
@@ -84,21 +113,49 @@ export function UyushmaFares() {
 
   const handleSaveFare = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return; // a second submit would create a second fare rule
     if (!name.trim()) {
       setFormError("Tarif nomi majburiy.");
       return;
     }
-    if (amount <= 0) {
-      setFormError("Tarif narxi musbat bo'lishi kerak.");
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setFormError("Tarif narxi musbat son bo'lishi kerak.");
       return;
     }
+    if (ruleType === 'distance' && (!Number.isFinite(perKmRate) || perKmRate < 0 || !Number.isFinite(includedKm) || includedKm < 0)) {
+      setFormError("Km narxi va bepul km musbat son bo'lishi kerak.");
+      return;
+    }
+    if (ruleType === 'zone' && (!Number.isFinite(crossZoneExtra) || crossZoneExtra < 0)) {
+      setFormError("Zona ustamasi musbat son bo'lishi kerak.");
+      return;
+    }
+    if (ruleType === 'time_based') {
+      if (!Number.isFinite(peakMultiplier) || peakMultiplier < 1) {
+        setFormError("Pik koeffitsiyenti 1.0 dan kichik bo'lmasligi kerak.");
+        return;
+      }
+      if (!Number.isInteger(peakStartHour) || !Number.isInteger(peakEndHour) || peakStartHour < 0 || peakStartHour > 23 || peakEndHour < 0 || peakEndHour > 23) {
+        setFormError('Pik soatlari 0 va 23 orasida bo‘lishi kerak.');
+        return;
+      }
+      if (peakStartHour === peakEndHour) {
+        setFormError('Pik boshlanish va tugash soati bir xil bo‘lmasligi kerak.');
+        return;
+      }
+    }
 
+    setSaving(true);
     try {
+      // Every field of the rule's own type is sent, because the backend stores `config` as a whole:
+      // omitting the peak window here used to erase it on every save of a time_based rule.
       const extraConfig = {
         per_km_rate: ruleType === 'distance' ? perKmRate : undefined,
         included_km: ruleType === 'distance' ? includedKm : undefined,
         cross_zone_extra: ruleType === 'zone' ? crossZoneExtra : undefined,
         peak_multiplier: ruleType === 'time_based' ? peakMultiplier : undefined,
+        peak_start_hour: ruleType === 'time_based' ? peakStartHour : undefined,
+        peak_end_hour: ruleType === 'time_based' ? peakEndHour : undefined,
       };
 
       if (editingFare) {
@@ -128,14 +185,22 @@ export function UyushmaFares() {
       }
       setIsModalOpen(false);
     } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : 'Xatolik yuz berdi');
+      setFormError(errorMessage(err, 'Xatolik yuz berdi'));
+    } finally {
+      setSaving(false);
     }
   };
 
+  /** Tariffs referenced by payments are kept for history: "delete" deactivates the rule. */
   const handleDeleteFare = async (fareId: string) => {
-    if (!window.confirm("Haqiqatan ham ushbu tarifni o'chirmoqchimisiz?")) return;
-    await uyushmaApi.deleteFareRule(uyushmaId, fareId);
-    setFares(prev => prev.filter(f => f.id !== fareId));
+    if (!window.confirm("Tarif faolsizlantirilsinmi? Yangi to'lovlarda qo'llanilmaydi (tarix saqlanadi).")) return;
+    setLoadError(null);
+    try {
+      await uyushmaApi.deleteFareRule(uyushmaId, fareId);
+      setFares(prev => prev.map(f => (f.id === fareId ? { ...f, is_active: false } : f)));
+    } catch (err) {
+      setLoadError(errorMessage(err, "Tarifni faolsizlantirib bo'lmadi"));
+    }
   };
 
   const filteredFares = fares.filter(f => {
@@ -172,6 +237,19 @@ export function UyushmaFares() {
           </button>
         </div>
       </div>
+
+      {!uyushmaId && (
+        <div className="rule-conflict-alert">
+          <i className="ri-building-2-line" />
+          <div>Uyushma tanlanmagan. Yuqoridagi ro'yxatdan Uyushmani tanlang.</div>
+        </div>
+      )}
+      {loadError && (
+        <div className="rule-conflict-alert" role="alert">
+          <i className="ri-error-warning-fill" />
+          <div>{loadError}</div>
+        </div>
+      )}
 
       {/* Toolbar */}
       <div className="uyushma-toolbar">
@@ -233,16 +311,16 @@ export function UyushmaFares() {
                   </td>
                   <td>
                     <strong style={{ fontSize: '1rem', color: 'var(--success)' }}>
-                      {f.amount.toLocaleString('uz-UZ')} UZS
+                      {formatSom(f.amount)}
                     </strong>
                     {f.rule_type === 'distance' && f.per_km_rate && (
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
-                        +{f.per_km_rate.toLocaleString('uz-UZ')} UZS/km ({f.included_km || 3} km dan so'ng)
+                        +{formatSom(f.per_km_rate)}/km ({f.included_km || 3} km dan so'ng)
                       </div>
                     )}
                     {f.rule_type === 'zone' && f.cross_zone_extra && (
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
-                        +{f.cross_zone_extra.toLocaleString('uz-UZ')} UZS zona ustamasi
+                        +{formatSom(f.cross_zone_extra)} zona ustamasi
                       </div>
                     )}
                     {f.rule_type === 'time_based' && f.peak_multiplier && (
@@ -415,6 +493,35 @@ export function UyushmaFares() {
                       />
                       <span className="hint">Masalan 1.25 = tirbandlik vaqtida 25% qo'shimcha</span>
                     </div>
+                    <div className="form-grid-2">
+                      <div className="uyushma-form-group">
+                        <label>Pik boshlanishi (soat)</label>
+                        <input
+                          type="number"
+                          className="uyushma-input"
+                          value={peakStartHour}
+                          onChange={e => setPeakStartHour(parseInt(e.target.value, 10))}
+                          min={0}
+                          max={23}
+                        />
+                      </div>
+                      <div className="uyushma-form-group">
+                        <label>Pik tugashi (soat)</label>
+                        <input
+                          type="number"
+                          className="uyushma-input"
+                          value={peakEndHour}
+                          onChange={e => setPeakEndHour(parseInt(e.target.value, 10))}
+                          min={0}
+                          max={23}
+                        />
+                      </div>
+                    </div>
+                    <span className="hint">
+                      {peakStartHour > peakEndHour
+                        ? `Tungi oyna: ${peakStartHour}:00 dan ertangi ${peakEndHour}:00 gacha`
+                        : `Kunlik oyna: ${peakStartHour}:00 – ${peakEndHour}:00`}
+                    </span>
                   </div>
                 )}
 
@@ -468,9 +575,9 @@ export function UyushmaFares() {
                 >
                   Bekor qilish
                 </button>
-                <button type="submit" className="btn-primary-action">
-                  <i className="ri-save-line" />
-                  Saqlash
+                <button type="submit" className="btn-primary-action" disabled={saving}>
+                  <i className={saving ? 'ri-loader-4-line ri-spin' : 'ri-save-line'} />
+                  {saving ? 'Saqlanmoqda…' : 'Saqlash'}
                 </button>
               </div>
             </form>

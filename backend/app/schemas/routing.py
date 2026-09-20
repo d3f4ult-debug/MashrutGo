@@ -35,6 +35,7 @@ class ItineraryLeg(BaseModel):
     distance_meters: int
     duration_minutes: int
     fare_uzs: int = 0
+    fare_known: bool = True
     stops_count: Optional[int] = None
     polyline: Optional[str] = None
     live_status: Optional[str] = Field(None, examples=["online_vehicles_visible", "no_online_vehicle_visible"])
@@ -54,6 +55,8 @@ class Itinerary(BaseModel):
     wait_duration_minutes: int
     transfers_count: int
     total_fare_uzs: int
+    fare_known: bool = True
+    online_vehicles_count: int = 0
     live_status: str = Field(..., examples=["online_vehicles_visible", "no_online_vehicle_visible"])
     live_confidence: float = Field(..., ge=0.0, le=1.0)
     legs: List[ItineraryLeg]

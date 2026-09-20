@@ -1,237 +1,153 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
-import AppMap, { AppMapHandle } from '@/components/map/AppMap'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import AppMap from '@/components/map/AppMap'
 import RouteCard from '@/components/ui/RouteCard'
 import ItineraryLegs from '@/components/map/ItineraryLegs'
 import RouteFilterTabs from '@/components/client/RouteFilterTabs'
 import LoadingSkeleton from '@/components/ui/LoadingSkeleton'
 import EmptyState from '@/components/ui/EmptyState'
-import SearchInput from '@/components/ui/SearchInput'
-import { geocode } from '@/services/map/geocode'
-import { findItineraries } from '@/services/routing/routingService'
-import {
-  addMarker,
-  clearAllMarkers,
-  drawPolyline,
-  clearPolyline,
-  fitBoundsToCoordinates
-} from '@/services/map/maptiler'
-import { Itinerary, OptimizationMode } from '@/types/client'
+import { clientApi } from '@/services/api/clientApi'
+import { errorMessage } from '@/services/api/client'
+import { addMarker, clearAllMarkers, clearPolyline, drawPolyline, fitBoundsToCoordinates } from '@/services/map/maptiler'
+import type { Coordinates, Itinerary, OptimizationMode } from '@/types/client'
 import { uz } from '@/locales/uz'
 
+function readPoint(params: URLSearchParams, prefix: 'from' | 'to'): { name: string; coordinates: Coordinates } | null {
+  const lat = Number(params.get(`${prefix}Lat`))
+  const lng = Number(params.get(`${prefix}Lng`))
+  if (!params.get(`${prefix}Lat`) || !params.get(`${prefix}Lng`) || Number.isNaN(lat) || Number.isNaN(lng)) return null
+  return { name: params.get(prefix) || (prefix === 'from' ? 'A nuqta' : 'B nuqta'), coordinates: [lng, lat] }
+}
+
+// Same comparators the backend applies to `mode` (graph_router._evaluate_multi_criteria). The
+// search returns every candidate it found, not a truncated top-N, so switching tabs only re-sorts
+// the list already on screen — no refetch, no spinner between tabs.
+const SORTERS: Record<OptimizationMode, (a: Itinerary, b: Itinerary) => number> = {
+  fastest: (a, b) => a.totalDurationMinutes - b.totalDurationMinutes || a.transferCount - b.transferCount,
+  cheapest: (a, b) => a.totalFareSoM - b.totalFareSoM || a.totalDurationMinutes - b.totalDurationMinutes,
+  least_walking: (a, b) => a.totalWalkingMeters - b.totalWalkingMeters || a.totalDurationMinutes - b.totalDurationMinutes,
+  least_transfers: (a, b) => a.transferCount - b.transferCount || a.totalDurationMinutes - b.totalDurationMinutes,
+}
+
 export default function Search() {
-  const [searchParams] = useSearchParams()
+  const [params] = useSearchParams()
   const navigate = useNavigate()
-  const fromParam = searchParams.get('from') || 'Eski Shahar'
-  const toParam = searchParams.get('to') || 'Yangi Bozor'
+  const origin = useMemo(() => readPoint(params, 'from'), [params])
+  const destination = useMemo(() => readPoint(params, 'to'), [params])
 
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [itineraries, setItineraries] = useState<Itinerary[]>([])
-  const [selectedMode, setSelectedMode] = useState<OptimizationMode>('fastest')
-  const [selectedItinerary, setSelectedItinerary] = useState<Itinerary | null>(null)
+  const [mode, setMode] = useState<OptimizationMode>('fastest')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [map, setMap] = useState<any | null>(null)
-  const abortControllerRef = useRef<AbortController | null>(null)
-  const mapRef = useRef<AppMapHandle | null>(null)
-  const [query, setQuery] = useState('')
   const [mobileView, setMobileView] = useState<'list' | 'map'>('list')
+  const drawnLegs = useRef(0)
 
-  const handleMapReady = useCallback((m: any) => {
-    setMap(m)
-  }, [])
-
-  const handleSearch = useCallback(async (q: string) => {
-    if (!q || q.length < 2) return
-    try {
-      // allow tests to inject a hoist-safe mock via globalThis
-      const geocodeFn = (globalThis as any).__testGeocode || (globalThis as any).__mockGeocode || geocode
-      const results = await geocodeFn(q)
-      if (results && results.length > 0) {
-        const first = results[0]
-        if (mapRef.current) {
-          mapRef.current.centerOn(first.center[0], first.center[1], 14)
-        } else {
-          // if ref not ready yet (race in tests), try again on next tick
-          setTimeout(() => {
-            try {
-              mapRef.current?.centerOn(first.center[0], first.center[1], 14)
-            } catch (e) {
-              // ignore
-            }
-          }, 0)
-        }
-      }
-    } catch (e) {
-      // ignore geocode errors
-    }
-  }, [])
-
-  // Execute search with abort controller
-  useEffect(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-    }
+  const runSearch = useCallback(() => {
+    if (!origin || !destination) return () => undefined
     const controller = new AbortController()
-    abortControllerRef.current = controller
-
     setLoading(true)
-    findItineraries(fromParam, toParam, controller.signal)
+    setError(null)
+    clientApi
+      .searchItineraries(origin, destination, 'fastest', controller.signal)
       .then((results) => {
         setItineraries(results)
-        // Default select fastest
-        const match = results.find((r) => r.mode === selectedMode) || results[0]
-        setSelectedItinerary(match || null)
+        setSelectedId(results[0]?.id ?? null)
       })
       .catch((err) => {
-        if (err.name !== 'AbortError') {
-          console.error('Search error:', err)
-        }
+        if ((err as Error).name !== 'AbortError') setError(errorMessage(err, 'Yo‘nalishlarni hisoblab bo‘lmadi'))
       })
-      .finally(() => {
-        setLoading(false)
-      })
+      .finally(() => setLoading(false))
+    return () => controller.abort()
+  }, [origin, destination])
 
-    return () => {
-      controller.abort()
-    }
-  }, [fromParam, toParam])
+  useEffect(() => runSearch(), [runSearch])
 
-  // Filter itineraries according to selectedMode
-  const filteredItineraries = itineraries.filter((i) => {
-    if (selectedMode === 'fastest') return true
-    if (selectedMode === 'cheapest') return i.totalFareSoM <= 2000
-    if (selectedMode === 'least_walking') return i.totalWalkingMeters < 500
-    if (selectedMode === 'least_transfers') return i.transferCount === 0
-    return true
-  })
+  const sorted = useMemo(() => [...itineraries].sort(SORTERS[mode]), [itineraries, mode])
+  const selected = sorted.find((i) => i.id === selectedId) ?? sorted[0] ?? null
 
-  // Render selected itinerary geometry on map
+  const handleMode = (next: OptimizationMode) => {
+    setMode(next)
+    const best = [...itineraries].sort(SORTERS[next])[0]
+    if (best) setSelectedId(best.id)
+  }
+
+  // Draw the selected itinerary
   useEffect(() => {
-    if (!map || !selectedItinerary) return
-
+    if (!map) return
     clearAllMarkers(map)
-    // Clear lines
-    clearPolyline(map, 'walk-1')
-    clearPolyline(map, 'transit-main')
-    clearPolyline(map, 'walk-2')
+    for (let i = 0; i < drawnLegs.current; i += 1) clearPolyline(map, `leg-${i}`)
+    drawnLegs.current = 0
+    if (!selected || !origin || !destination) return
 
-    const allPoints: [number, number][] = []
-
-    selectedItinerary.legs.forEach((leg, idx) => {
-      const lineId = `leg-${idx}`
-      if (leg.geometry && leg.geometry.length > 0) {
-        drawPolyline(map, lineId, leg.geometry, {
+    const allPoints: Coordinates[] = [origin.coordinates, destination.coordinates]
+    selected.legs.forEach((leg, idx) => {
+      if (leg.geometry && leg.geometry.length > 1) {
+        drawPolyline(map, `leg-${idx}`, leg.geometry, {
           color: leg.type === 'walking' ? '#64748b' : '#2563eb',
           dashed: leg.type === 'walking',
-          width: leg.type === 'walking' ? 3 : 5
+          width: leg.type === 'walking' ? 3 : 5,
         })
-        leg.geometry.forEach((pt) => allPoints.push(pt))
+        allPoints.push(...leg.geometry)
       }
-
-      // Add stop markers
-      if (leg.fromStop) {
-        addMarker(map, `stop-${leg.fromStop.id}`, leg.fromStop.coordinates, {
-          type: 'boarding',
-          label: leg.routeNumber || 'A'
-        })
-        allPoints.push(leg.fromStop.coordinates)
-      }
-      if (leg.toStop) {
-        addMarker(map, `stop-${leg.toStop.id}`, leg.toStop.coordinates, {
-          type: 'alighting',
-          label: 'B'
-        })
-        allPoints.push(leg.toStop.coordinates)
+      if (leg.type === 'transit') {
+        if (leg.fromStop) addMarker(map, `board-${idx}`, leg.fromStop.coordinates, { type: idx > 1 ? 'transfer' : 'boarding', label: leg.routeNumber })
+        if (leg.toStop) addMarker(map, `alight-${idx}`, leg.toStop.coordinates, { type: 'alighting', label: 'B' })
       }
     })
+    drawnLegs.current = selected.legs.length
+    addMarker(map, 'origin', origin.coordinates, { type: 'user' })
+    addMarker(map, 'destination', destination.coordinates, { type: 'alighting', label: 'B' })
+    fitBoundsToCoordinates(map, allPoints)
+  }, [map, selected, origin, destination])
 
-    if (allPoints.length > 0) {
-      fitBoundsToCoordinates(map, allPoints)
-    }
-  }, [map, selectedItinerary])
+  if (!origin || !destination) {
+    return (
+      <EmptyState
+        title="A va B nuqtalar tanlanmagan"
+        description="Bosh sahifada qayerdan va qayerga borishni ro‘yxatdan tanlang."
+      />
+    )
+  }
 
   return (
     <div className="space-y-4">
-      {/* Route Header summary */}
       <div className="bg-white rounded-2xl p-4 border border-neutral-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-neutral-800">
-          <span className="text-blue-600 font-bold">{fromParam}</span>
+        <div className="flex items-center gap-2 text-sm font-semibold text-neutral-800 min-w-0">
+          <span className="text-blue-600 font-bold truncate">{origin.name}</span>
           <i className="ri-arrow-right-line text-neutral-400"></i>
-          <span className="text-red-600 font-bold">{toParam}</span>
+          <span className="text-red-600 font-bold truncate">{destination.name}</span>
         </div>
-        <button
-          onClick={() => navigate('/')}
-          className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1"
-        >
+        <button onClick={() => navigate('/')} className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1">
           <i className="ri-edit-line"></i>
           <span>O‘zgartirish</span>
         </button>
       </div>
 
-      {/* Filter Tabs */}
-            <div className="mb-3 flex gap-2">
-              <SearchInput
-                placeholder="Qayerga bormoqchisiz?"
-                value={query}
-                onChange={(e) => setQuery((e.target as HTMLInputElement).value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSearch(query)
-                }}
-              />
-              <button
-                type="button"
-                className="px-3 py-2 bg-blue-600 text-white rounded-lg"
-                onClick={() => handleSearch(query)}
-              >
-                Qidirish
-              </button>
-            </div>
+      <RouteFilterTabs activeMode={mode} onSelectMode={handleMode} />
 
-            <RouteFilterTabs
-        activeMode={selectedMode}
-        onSelectMode={(mode) => {
-          setSelectedMode(mode)
-          const found = itineraries.find((i) => i.mode === mode)
-          if (found) setSelectedItinerary(found)
-        }}
-      />
-
-      {/* Mobile view segmented control */}
       <div className="flex lg:hidden bg-neutral-200/70 p-1 rounded-xl text-xs font-semibold">
-        <button
-          type="button"
-          onClick={() => setMobileView('list')}
-          className={`flex-1 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-            mobileView === 'list'
-              ? 'bg-white text-blue-700 shadow-xs font-bold'
-              : 'text-neutral-600 hover:text-neutral-900'
-          }`}
-        >
-          <i className="ri-list-check-2"></i>
-          <span>Ro‘yxat ({filteredItineraries.length})</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setMobileView('map')}
-          className={`flex-1 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-            mobileView === 'map'
-              ? 'bg-white text-blue-700 shadow-xs font-bold'
-              : 'text-neutral-600 hover:text-neutral-900'
-          }`}
-        >
-          <i className="ri-map-2-line"></i>
-          <span>Xarita</span>
-        </button>
+        {(['list', 'map'] as const).map((view) => (
+          <button
+            key={view}
+            type="button"
+            onClick={() => setMobileView(view)}
+            className={`flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1.5 ${
+              mobileView === view ? 'bg-white text-blue-700 shadow-xs font-bold' : 'text-neutral-600'
+            }`}
+          >
+            <i className={view === 'list' ? 'ri-list-check-2' : 'ri-map-2-line'}></i>
+            <span>{view === 'list' ? `Ro‘yxat (${sorted.length})` : 'Xarita'}</span>
+          </button>
+        ))}
       </div>
 
-      {/* Desktop Responsive Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* Left column: Itinerary Cards & Detailed Steps */}
         <div className={`lg:col-span-6 space-y-4 ${mobileView === 'map' ? 'hidden lg:block' : 'block'}`}>
           <h2 className="text-sm font-bold text-neutral-800 flex items-center justify-between">
             <span>{uz.alternatives.title}</span>
-            <span className="text-xs font-normal text-neutral-500">
-              {filteredItineraries.length} ta natija
-            </span>
+            <span className="text-xs font-normal text-neutral-500">{sorted.length} ta natija</span>
           </h2>
 
           {loading ? (
@@ -240,61 +156,52 @@ export default function Search() {
               <LoadingSkeleton className="h-24 rounded-xl" />
               <LoadingSkeleton className="h-24 rounded-xl" />
             </div>
-          ) : filteredItineraries.length === 0 ? (
-            <EmptyState
-              title={uz.search.noResults}
-              description="Boshqa filtrni tanlang yoki manzillarni tekshiring"
-            />
+          ) : error ? (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 space-y-2">
+              <div className="flex items-center gap-2">
+                <i className="ri-error-warning-line"></i>
+                <span>{error}</span>
+              </div>
+              <button onClick={runSearch} className="text-xs font-semibold underline">
+                Qayta urinish
+              </button>
+            </div>
+          ) : sorted.length === 0 ? (
+            <EmptyState title={uz.search.noResults} description="Manzillarni tekshiring yoki boshqa nuqta tanlang" />
           ) : (
             <div className="space-y-3" data-testid="itineraries-list">
-              {filteredItineraries.map((itn) => (
-                <RouteCard
-                  key={itn.id}
-                  itinerary={itn}
-                  isSelected={selectedItinerary?.id === itn.id}
-                  onClick={() => setSelectedItinerary(itn)}
-                />
+              {sorted.map((itn) => (
+                <RouteCard key={itn.id} itinerary={itn} isSelected={selected?.id === itn.id} onClick={() => setSelectedId(itn.id)} />
               ))}
             </div>
           )}
 
-          {/* Selected Itinerary Step-by-Step Breakdown */}
-          {selectedItinerary && (
+          {selected && !loading && (
             <div className="pt-2 space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-neutral-900">
-                  {uz.routeDetails.title} (Bosqichma-bosqich)
-                </h3>
-                {selectedItinerary.routeNumbers.length > 0 && (
-                  <button
-                    onClick={() => navigate(`/route/${selectedItinerary.routeNumbers[0]}`)}
-                    className="text-xs font-semibold text-blue-600 hover:underline"
-                  >
-                    Jonli kuzatuv sahifasi →
-                  </button>
+                <h3 className="text-sm font-bold text-neutral-900">{uz.routeDetails.title} (Bosqichma-bosqich)</h3>
+                {selected.routeIds.length > 0 && (
+                  <Link to={`/route/${selected.routeIds[0]}`} className="text-xs font-semibold text-blue-600 hover:underline">
+                    Jonli kuzatuv →
+                  </Link>
                 )}
               </div>
-              <ItineraryLegs itinerary={selectedItinerary} showDetailedSteps={true} />
+              <ItineraryLegs itinerary={selected} showDetailedSteps />
             </div>
           )}
         </div>
 
-        {/* Right column: Interactive Map View */}
-        <div className={`lg:col-span-6 sticky top-20 ${mobileView === 'list' ? 'hidden lg:block' : 'block'}`}>
+        <div className={`lg:col-span-6 lg:sticky lg:top-20 ${mobileView === 'list' ? 'hidden lg:block' : 'block'}`}>
           <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden shadow-xs">
             <div className="p-3 border-b border-neutral-100 flex items-center justify-between">
               <span className="text-xs font-bold text-neutral-800 flex items-center gap-1.5">
                 <i className="ri-map-pin-range-line text-blue-600"></i>
                 <span>Tanlangan yo‘nalish xaritasi</span>
               </span>
-              {selectedItinerary && (
-                <span className="text-xs font-bold text-blue-700">
-                  {selectedItinerary.totalDurationMinutes} daqiqa
-                </span>
-              )}
+              {selected && <span className="text-xs font-bold text-blue-700">{selected.totalDurationMinutes} daqiqa</span>}
             </div>
             <div className="h-80 sm:h-[480px] w-full relative">
-              <AppMap ref={mapRef} onMapReady={handleMapReady} />
+              <AppMap center={origin.coordinates} onMapReady={setMap} />
             </div>
           </div>
         </div>

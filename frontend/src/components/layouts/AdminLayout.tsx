@@ -1,5 +1,6 @@
 import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { UyushmaScopeSelector } from '../../contexts/UyushmaScopeContext'
 import './AdminLayout.css'
 
 /**
@@ -23,6 +24,7 @@ export function AdminLayout() {
     { to: '/admin/vehicles', icon: 'ri-bus-2-line', label: 'Transportlar', end: false },
     { to: '/admin/clients', icon: 'ri-group-line', label: 'Clientlar', end: false },
     { to: '/admin/parkings', icon: 'ri-parking-box-line', label: 'Stoyankalar', end: false },
+    { to: '/admin/fares', icon: 'ri-money-dollar-circle-line', label: 'Tariflar', end: false },
     { to: '/admin/payments', icon: 'ri-wallet-3-line', label: "To'lovlar", end: false },
     { to: '/admin/shifts', icon: 'ri-radar-line', label: 'Jonli Smenalar', end: false },
     { to: '/admin/map', icon: 'ri-map-2-line', label: 'Live Xarita', end: false },
@@ -84,6 +86,9 @@ export function AdminLayout() {
 
       {/* Main content */}
       <main className="admin-main">
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0.75rem 1.5rem 0' }}>
+          <UyushmaScopeSelector />
+        </div>
         <Outlet />
       </main>
 

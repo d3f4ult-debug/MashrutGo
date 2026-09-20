@@ -1043,3 +1043,22 @@
 .empty-state-box p {
   font-size: 0.85rem;
 }
+
+.ledger-type-icon.adjustment {
+  background: var(--info-subtle);
+  color: var(--info);
+}
+
+.btn-refresh-icon .spin {
+  display: inline-block;
+  animation: payments-spin 0.9s linear infinite;
+}
+
+@keyframes payments-spin {
+  to { transform: rotate(360deg); }
+}
+
+.btn-cashout-cta:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

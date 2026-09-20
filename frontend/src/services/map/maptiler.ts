@@ -1,57 +1,94 @@
 import maplibregl from 'maplibre-gl'
 
+export type MapVariant = 'streets' | 'dark'
+
+export const ANDIJON_CENTER: [number, number] = [72.3442, 40.7829]
+
+/** MapTiler key from VITE_MAPTILER_KEY (never hardcoded). Empty => OpenStreetMap raster fallback. */
 export function getMapTilerKey(): string {
-  return import.meta.env.VITE_MAPTILER_API_KEY || 'get_your_own_OpIi9ZULNHzrESv6T2vL'
+  const key = (import.meta.env?.VITE_MAPTILER_KEY as string | undefined) || ''
+  return key && !/get_your|placeholder/i.test(key) ? key : ''
 }
 
 export function hasMapTilerKey(): boolean {
   return Boolean(getMapTilerKey())
 }
 
+/** Real OpenStreetMap raster tiles (development / low traffic; use MapTiler in production). */
+export function buildOsmStyle(variant: MapVariant = 'streets'): maplibregl.StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      osm: {
+        type: 'raster',
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: '© OpenStreetMap contributors',
+      },
+    },
+    layers: [
+      {
+        id: 'osm',
+        type: 'raster',
+        source: 'osm',
+        paint:
+          variant === 'dark'
+            ? { 'raster-brightness-max': 0.55, 'raster-saturation': -0.7, 'raster-contrast': 0.1 }
+            : {},
+      },
+    ],
+  } as maplibregl.StyleSpecification
+}
+
+/** MapTiler vector style when a key is configured, otherwise OpenStreetMap tiles. */
+export function getMapStyle(variant: MapVariant = 'streets'): string | maplibregl.StyleSpecification {
+  const key = getMapTilerKey()
+  if (!key) return buildOsmStyle(variant)
+  const style = variant === 'dark' ? 'dataviz-dark' : 'streets-v2'
+  return `https://api.maptiler.com/maps/${style}/style.json?key=${key}`
+}
+
+/** A revoked/exhausted MapTiler key must not leave users without a map. */
+export function attachStyleFallback(map: maplibregl.Map, variant: MapVariant = 'streets') {
+  let switched = false
+  map.on('error', (e: any) => {
+    const status = e?.error?.status
+    if (!switched && hasMapTilerKey() && (status === 401 || status === 403)) {
+      switched = true
+      console.warn('MapTiler key rejected — switching to OpenStreetMap tiles')
+      try {
+        map.setStyle(buildOsmStyle(variant))
+      } catch {
+        // ignore
+      }
+    }
+  })
+}
+
 export function initMap(
   container: HTMLElement,
-  opts: { center?: [number, number]; zoom?: number } = {}
+  opts: { center?: [number, number]; zoom?: number; variant?: MapVariant } = {}
 ) {
-  const key = getMapTilerKey()
-  const style = `https://api.maptiler.com/maps/streets-v2/style.json?key=${key}`
-
-  // Center convention: opts.center can be [lat, lng] or [lng, lat]. In Andijon, lat ~ 40.78, lng ~ 72.34
-  let centerLngLat: [number, number] = [72.342, 40.782]
+  // Center convention: [lng, lat]; [lat, lng] is accepted and swapped (Andijon lat ~40, lng ~72)
+  let centerLngLat: [number, number] = ANDIJON_CENTER
   if (opts.center) {
-    // If first element is > 50, it's lng; if < 50, it's lat
-    if (opts.center[0] > 50) {
-      centerLngLat = [opts.center[0], opts.center[1]]
-    } else {
-      centerLngLat = [opts.center[1], opts.center[0]]
-    }
+    centerLngLat = opts.center[0] > 50 ? [opts.center[0], opts.center[1]] : [opts.center[1], opts.center[0]]
   }
 
   const map = new maplibregl.Map({
     container,
-    style,
+    style: getMapStyle(opts.variant),
     center: centerLngLat,
     zoom: opts.zoom ?? 13
   })
 
-  // Add navigation controls (+, -, compass)
   try {
-    if (maplibregl.NavigationControl) {
-      map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right')
-    }
-  } catch (e) {
-    // ignore
+    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right')
+  } catch {
+    // controls are optional (tests / old browsers)
   }
-
-  // Gracefully handle style error if MapTiler key is invalid/exhausted
-  map.on('error', (e: any) => {
-    if (e?.error?.status === 403 || e?.error?.status === 401) {
-      console.warn('MapTiler key unauthorized, falling back to open tiles...')
-      try {
-        map.setStyle('https://demotiles.maplibre.org/style.json')
-      } catch (err) {}
-    }
-  })
-
+  attachStyleFallback(map, opts.variant)
   return map
 }
 
@@ -78,7 +115,7 @@ export function addMarker(
     const existing = (map as any)._markers.get(id)
     try {
       existing.remove()
-    } catch (e) {}
+    } catch {}
   }
 
   const opts: MarkerOptions =
@@ -144,13 +181,13 @@ export function addMarker(
     const marker = new maplibregl.Marker({ element: el }).setLngLat(coord).addTo(map)
     ;(map as any)._markers.set(id, marker)
     return marker
-  } catch (e) {
+  } catch {
     // fallback in case mock/environment uses older constructor signature
     try {
       const marker = new (maplibregl as any).Marker(el).setLngLat(coord).addTo(map)
       ;(map as any)._markers.set(id, marker)
       return marker
-    } catch (err) {
+    } catch {
       return null
     }
   }
@@ -162,8 +199,8 @@ export function removeMarker(map: any, id: string) {
   if (m) {
     try {
       m.remove()
-    } catch (e) {}
-    ;(map as any)._markers.delete(id)
+    } catch {}
+    (map as any)._markers.delete(id)
   }
 }
 
@@ -174,7 +211,7 @@ export function clearAllMarkers(map: any) {
   for (const [, marker] of markers.entries()) {
     try {
       marker.remove()
-    } catch (e) {}
+    } catch {}
   }
   markers.clear()
 }
@@ -203,8 +240,8 @@ export function drawPolyline(
 
   if (map.getSource && map.getSource(sourceId)) {
     try {
-      ;(map.getSource(sourceId) as any).setData(geojson)
-    } catch (e) {}
+      (map.getSource(sourceId) as any).setData(geojson)
+    } catch {}
     return
   }
 
@@ -230,7 +267,7 @@ export function drawPolyline(
     if (map.addLayer) {
       map.addLayer(layerDef)
     }
-  } catch (e) {
+  } catch {
     // ignore
   }
 }
@@ -245,7 +282,7 @@ export function clearPolyline(map: any, id: string) {
     if (map.getSource && map.getSource(sourceId)) {
       map.removeSource(sourceId)
     }
-  } catch (e) {
+  } catch {
     // ignore
   }
 }
@@ -259,7 +296,7 @@ export function fitBoundsToCoordinates(map: any, coords: [number, number][]) {
       coords.forEach((coord) => bounds.extend(coord))
       map.fitBounds(bounds, { padding: 40, maxZoom: 15, duration: 800 })
     }
-  } catch (e) {
+  } catch {
     // ignore
   }
 }
