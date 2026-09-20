@@ -34,3 +34,6 @@ e2e/node_modules/
 e2e/test-results/
 e2e/playwright-report/
 backend/e2e.db
+
+# Launcher dependency stamps (scripts/dev.py)
+.dev-stamps/

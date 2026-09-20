@@ -18,7 +18,42 @@ haydovchi, transport, stoyanka, tarif, moliya), **Super Admin** (butun platforma
 
 ## 1. Tezkor ishga tushirish
 
-### Backend
+Bitta buyruq — backend ham, frontend ham ko‘tariladi:
+
+```bash
+./start.sh        # macOS / Linux
+```
+
+```bat
+start.cmd         :: Windows (PowerShell'da ham, cmd'da ham, ikki marta bosib ham)
+```
+
+Skript o‘zi: mos Python'ni topadi, `backend/.venv` yaratadi, ikkala loyihaning kutubxonalarini
+o‘rnatadi, `backend/.env` ni `.env.example` dan nusxalaydi, Alembic migratsiyalarini qo‘llaydi,
+Andijon demo ma’lumotlarini yozadi va API bilan web ilovani birga ishga tushiradi. `Ctrl+C`
+ikkalasini ham to‘xtatadi. Ikkinchi marta ishga tushirish ~1 soniya — kutubxonalar qayta
+o‘rnatilmaydi (faqat `requirements*.txt` yoki `package-lock.json` o‘zgarsa).
+
+| | |
+|---|---|
+| Web ilova | <http://localhost:5173> |
+| OpenAPI (Swagger) | <http://localhost:8000/api/v1/docs> |
+
+Foydali bayroqlar (`./start.sh --help`):
+
+| Bayroq | Nima qiladi |
+|---|---|
+| `--backend-only` / `--frontend-only` | faqat bittasini ko‘taradi |
+| `--no-seed` | demo ma’lumotlarsiz (bo‘sh baza) |
+| `--offline-routing` | OSRM o‘rniga `geodesic` — internetsiz ishlaydi |
+| `--reinstall` | kutubxonalarni majburan qayta o‘rnatadi |
+| `--backend-port` / `--frontend-port` | portlarni o‘zgartiradi |
+
+**Talablar:** Python 3.10+ (3.12 tavsiya etiladi) va Node.js 18+ (20 tavsiya etiladi). Skript
+ularni tekshiradi va topilmasa nima qilish kerakligini aytadi.
+
+<details>
+<summary>Qo‘lda ishga tushirish (skriptsiz)</summary>
 
 ```bash
 cd backend
@@ -27,12 +62,6 @@ pip install -r requirements-dev.txt          # requirements.txt + pytest/ruff
 cp .env.example .env                          # kalitlarni to‘ldiring (haqiqiy secret commit qilinmaydi)
 uvicorn app.main:app --reload --port 8000
 ```
-
-- OpenAPI (Swagger): <http://localhost:8000/api/v1/docs>
-- Startda Alembic migratsiyalari avtomatik qo‘llanadi (`AUTO_MIGRATE=true`).
-- `SEED_DEMO_DATA=true` bo‘lsa Andijon demo ma’lumotlari yaratiladi (production’da taqiqlangan).
-
-### Frontend
 
 ```bash
 cd frontend
@@ -43,6 +72,8 @@ npm run dev              # http://localhost:5173
 
 Vite dev-server `/api` (REST **va** WebSocket) so‘rovlarini `http://127.0.0.1:8000` ga proksi qiladi,
 shuning uchun odatda hech qanday `VITE_*` o‘zgaruvchi shart emas.
+
+</details>
 
 ### Demo hisoblar (`SEED_DEMO_DATA=true`)
 
@@ -80,6 +111,22 @@ Backend (vaqtinchalik SQLite + Andijon demo ma’lumotlari) va frontend avtomati
 boshqa hech narsa ishga tushirish shart emas. Qamrov: A→B qidiruv, xodim kirishi va rol chegaralari,
 smena → brauzer GPS → jonli xarita, “Kutayapman” → haydovchi ro‘yxati → “Mashinadaman”,
 hamyonni to‘ldirish → ledger, yo‘l haqi → haydovchi balansi va ekrani.
+
+### CI
+
+Har push va har PR'da [`.github/workflows/ci.yml`](.github/workflows/ci.yml) to‘rtta ishni
+parallel bajaradi:
+
+| Job | Nima tekshiradi |
+|---|---|
+| `backend` | `ruff check` + `pytest` (100 test) |
+| `frontend` | `tsc --noEmit`, `eslint`, `vitest` (134 test), production build |
+| `e2e` | haqiqiy Chromium'da 17 test (API va Vite workflow ichida ko‘tariladi) |
+| `mobile` | `flutter analyze` + `flutter test` |
+
+Beshinchi `CI` job'i qolgan to‘rttasi yashil bo‘lgandagina o‘tadi — branch protection uchun shu
+bittasini “required check” qilib qo‘ying. Bir branch'ga ketma-ket push qilinsa, eskisi avtomatik
+bekor qilinadi. E2E yiqilsa, Playwright hisoboti artifact sifatida yuklanadi.
 
 ---
 

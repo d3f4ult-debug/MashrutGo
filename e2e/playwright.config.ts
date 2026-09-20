@@ -34,7 +34,7 @@ export default defineConfig({
 
   webServer: [
     {
-      command: './start-backend.sh',
+      command: 'node start-backend.mjs',
       url: 'http://127.0.0.1:8000/api/v1/health',
       reuseExistingServer: !process.env.CI,
       stdout: 'pipe',

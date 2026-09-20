@@ -1,100 +1,205 @@
 name: CI
 
-on: [push, pull_request]
+# Every push on every branch, plus pull requests (which also covers forks, whose pushes do not
+# run here). A push to a branch that has an open PR runs twice; the concurrency group below
+# cancels superseded runs so at most one run per ref is ever in flight.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only: nothing here publishes, deploys or comments.
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: '3.12'
+  NODE_VERSION: '20'
 
 jobs:
   backend:
+    name: Backend (lint + tests)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
+
       - name: Lint
         run: python -m ruff check .
+
       - name: Tests (migrations, RBAC, routing, payments, realtime)
-        # The suite runs against a temporary SQLite database and the offline routing provider
+        # Runs against a throwaway SQLite database and the offline routing provider, so no
+        # network service is involved.
         run: python -m pytest -q
 
+      - name: Launcher stays runnable on old Pythons
+        working-directory: .
+        # scripts/dev.py bootstraps the venv, so it has to parse under the system Python that
+        # ships on older machines (macOS still has 3.9) before a newer one exists.
+        run: |
+          python -c "import ast, sys; ast.parse(open('scripts/dev.py').read(), feature_version=(3, 8))"
+          echo 'scripts/dev.py parses as Python 3.8'
+
   frontend:
+    name: Frontend (typecheck + lint + tests + build)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
       - name: Install dependencies
         run: npm ci
+
       - name: Typecheck
         run: npm run typecheck
+
       - name: Lint
         run: npm run lint
+
       - name: Unit tests
         run: npm test
+
       - name: Production build
         run: npm run build
 
-  mobile:
+  e2e:
+    name: Browser end-to-end
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            e2e/package-lock.json
+
+      - name: Install backend dependencies
+        # The API only needs its runtime dependencies here; pytest and ruff run in their own job.
+        run: pip install -r backend/requirements.txt
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Resolve Playwright version
+        id: playwright
+        working-directory: e2e
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache browsers
+        id: browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install Chromium
+        if: steps.browsers.outputs.cache-hit != 'true'
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Chromium system libraries
+        # A cached browser still needs its shared libraries on a fresh runner.
+        if: steps.browsers.outputs.cache-hit == 'true'
+        working-directory: e2e
+        run: npx playwright install-deps chromium
+
+      - name: Run suite
+        working-directory: e2e
+        # playwright.config.ts starts the API (throwaway SQLite, demo data) and Vite itself.
+        run: npx playwright test
+
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 7
+
+  mobile:
+    name: Mobile (analyze + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: mobile
     steps:
       - uses: actions/checkout@v4
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
+
       - name: Install dependencies
         run: flutter pub get
+
       - name: Analyze
         run: flutter analyze
+
       - name: Tests
         run: flutter test
 
-  e2e:
-    # Real Chromium against the real API: the chains no unit test can cover (shift -> GPS -> map,
-    # "Kutayapman" -> driver, fare -> ledger -> driver screen).
+  ci:
+    # Single required check for branch protection: stays green only when every job above passed.
+    name: CI
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [backend, frontend, e2e, mobile]
+    if: always()
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install backend dependencies
-        run: pip install -r backend/requirements.txt
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-      - name: Install e2e dependencies
-        working-directory: e2e
-        run: npm install
-      - name: Install Chromium
-        working-directory: e2e
-        run: npx playwright install --with-deps chromium
-      - name: Run browser end-to-end suite
-        working-directory: e2e
-        run: npx playwright test
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: playwright-report
-          path: e2e/playwright-report
-          retention-days: 7
+      - name: Verify every job succeeded
+        run: |
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "Natijalar: $results"
+          for result in $results; do
+            if [ "$result" != "success" ]; then
+              echo "::error::Kamida bitta tekshiruv o'tmadi ($results)"
+              exit 1
+            fi
+          done
+          echo "Hamma tekshiruvlar o'tdi."
