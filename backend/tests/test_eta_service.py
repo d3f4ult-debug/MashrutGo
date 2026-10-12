@@ -9,6 +9,7 @@ from app.models.shift import DriverShift, LocationSnapshot
 from app.models.transport import Parking, Route, RouteDirection, RouteWaypoint, Vehicle
 from app.models.user import DriverProfile, User, UserRole
 from app.models.uyushma import Uyushma
+from app.schemas.driver import LiveVehicleStateResponse
 from app.services.realtime.tracking_service import LiveVehicleState, tracking_service
 from app.services.routing.eta_service import (
     eta_service,
@@ -153,10 +154,12 @@ def test_eta_approaching_vehicle(eta_test_setup):
     setup = eta_test_setup
     route_id = setup["route_id"]
 
+    now = datetime.now(timezone.utc)
     # Place live vehicle near origin (40.7750, 72.3350) approaching WP2 (Kasalxona at 40.7600, 72.3200)
-    tracking_service._live_vehicles[setup["vehicle_id"]] = LiveVehicleStateResponse(
-        vehicle_id=str(setup["vehicle_id"]),
+    tracking_service._live_vehicles[setup["vehicle_id"]] = LiveVehicleState(
+        vehicle_id=setup["vehicle_id"],
         internal_id=setup["internal_id"],
+        driver_id=setup["driver_id"],
         route_id=route_id,
         route_number="ETA-1",
         direction="outbound",
@@ -165,7 +168,8 @@ def test_eta_approaching_vehicle(eta_test_setup):
         speed_kmh=28.0,
         heading=220.0,
         accuracy_meters=4.0,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=now,
+        received_at=now,
         is_stale=False,
         parking_id=None,
     )
@@ -198,10 +202,12 @@ def test_eta_vehicle_past_stop_returns_null_no_fake_eta(eta_test_setup):
     setup = eta_test_setup
     route_id = setup["route_id"]
 
+    now = datetime.now(timezone.utc)
     # Place live vehicle downstream at WP3 (40.7500, 72.3100), past WP1 (40.7700, 72.3300)
-    tracking_service._live_vehicles[setup["vehicle_id"]] = LiveVehicleStateResponse(
-        vehicle_id=str(setup["vehicle_id"]),
+    tracking_service._live_vehicles[setup["vehicle_id"]] = LiveVehicleState(
+        vehicle_id=setup["vehicle_id"],
         internal_id=setup["internal_id"],
+        driver_id=setup["driver_id"],
         route_id=route_id,
         route_number="ETA-1",
         direction="outbound",
@@ -210,7 +216,8 @@ def test_eta_vehicle_past_stop_returns_null_no_fake_eta(eta_test_setup):
         speed_kmh=30.0,
         heading=220.0,
         accuracy_meters=3.0,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=now,
+        received_at=now,
         is_stale=False,
         parking_id=None,
     )
@@ -243,10 +250,12 @@ def test_eta_vehicle_in_parking_includes_dwell(eta_test_setup):
     setup = eta_test_setup
     route_id = setup["route_id"]
 
+    now = datetime.now(timezone.utc)
     # Place vehicle in parking near origin
-    tracking_service._live_vehicles[setup["vehicle_id"]] = LiveVehicleStateResponse(
-        vehicle_id=str(setup["vehicle_id"]),
+    tracking_service._live_vehicles[setup["vehicle_id"]] = LiveVehicleState(
+        vehicle_id=setup["vehicle_id"],
         internal_id=setup["internal_id"],
+        driver_id=setup["driver_id"],
         route_id=route_id,
         route_number="ETA-1",
         direction="outbound",
@@ -255,7 +264,8 @@ def test_eta_vehicle_in_parking_includes_dwell(eta_test_setup):
         speed_kmh=0.0,
         heading=0.0,
         accuracy_meters=3.0,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=now,
+        received_at=now,
         is_stale=False,
         parking_id=setup["parking_id"],
     )

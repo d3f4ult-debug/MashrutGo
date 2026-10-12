@@ -262,3 +262,50 @@ Sent when passenger taps *"Tushdim"* (alighted from vehicle). Ends ride lifecycl
    }
    ```
 4. The backend discards duplicate `idempotency_key` items and only updates the current live vehicle position if `captured_at` is newer than the latest stored snapshot.
+
+---
+
+## 6. Connection Health & Keep-Alive (Ping / Pong)
+
+To prevent mobile web/PWA socket drops over cellular networks (GPRS/3G/LTE in Andijon), clients and servers must support heartbeat ping/pong:
+
+### 6.1 Client Ping
+Client sends every 25–30 seconds:
+```json
+{
+  "event": "ping",
+  "data": { "t": 1726734000 },
+  "timestamp": "2026-09-19T06:30:00.000Z"
+}
+```
+
+### 6.2 Server Pong
+Backend immediately replies:
+```json
+{
+  "event": "pong",
+  "data": { "t": 1726734000 },
+  "timestamp": "2026-09-19T06:30:00.050Z"
+}
+```
+
+If the client receives no pong after 10 seconds, it should initiate backoff reconnection (`1s`, `2s`, `5s`, max `15s`).
+
+---
+
+## 7. Event Types & Frontend Mapping (Dev2 Client PWA & Dev3 Driver App)
+
+| Event Name | Direction | Receiver | UI Trigger / Purpose |
+|---|---|---|---|
+| `vehicle.location.updated` | S -> C | Client PWA / Admin | Map vehicle marker smooth interpolation |
+| `route.vehicle.status` | S -> C | Client PWA | Route card online indicator (shows "Hozir online transport ko'rinmayapti" when 0) |
+| `parking.count.updated` | S -> C | Client / Driver / Admin | Stayanka badge count update |
+| `client.nearby.broadcast` | S -> C | Driver PWA | Driver receives radar ping of waiting passenger |
+| `client.nearby.removed` | S -> C | Driver PWA | Remove passenger dot from driver radar |
+| `payment.notification` | S -> C | Driver PWA | Instant sound/haptic alert of received passenger fare |
+| `client.watch.start` | C -> S | Backend | Passenger starts route watch at bus stop |
+| `client.watch.heartbeat` | C -> S | Backend | Liveness ping (every 30s) |
+| `client.ride.on_car` | C -> S | Backend | Passenger taps "Mashinadaman" (stops broadcasting to other drivers) |
+| `client.ride.exited` | C -> S | Backend | Passenger taps "Tushdim" |
+| `ping` / `pong` | Both | Both | Cellular connection keep-alive |
+

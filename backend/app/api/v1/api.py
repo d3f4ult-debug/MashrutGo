@@ -9,11 +9,19 @@ from app.api.v1.parking import router as parking_router
 from app.api.v1.websocket import router as ws_router
 from app.api.v1.client_watch import router as client_watch_router, driver_router as client_driver_router
 from app.api.v1.eta import router as eta_router
+from app.api.v1.wallet import router as wallet_router
+from app.api.v1.payments import router as payments_router
+from app.api.v1.admin import router as admin_router
+from app.api.v1.notifications import router as notifications_router
+from app.api.v1.transport import router as transport_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(auth_router)
 api_router.include_router(uyushma_router)
+api_router.include_router(admin_router)
+api_router.include_router(notifications_router)
+api_router.include_router(transport_router)
 api_router.include_router(routes_router)
 api_router.include_router(routing_router)
 api_router.include_router(eta_router)
@@ -21,4 +29,6 @@ api_router.include_router(driver_router)
 api_router.include_router(client_driver_router)
 api_router.include_router(client_watch_router)
 api_router.include_router(parking_router)
+api_router.include_router(wallet_router)
+api_router.include_router(payments_router)
 api_router.include_router(ws_router)

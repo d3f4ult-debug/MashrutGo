@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from starlette.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
@@ -45,6 +46,15 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+    @app.get("/", include_in_schema=False)
+    def root_redirect():
+        return RedirectResponse(url=f"{settings.api_v1_prefix}/docs")
+
+    @app.get("/docs", include_in_schema=False)
+    def docs_redirect():
+        return RedirectResponse(url=f"{settings.api_v1_prefix}/docs")
+
     return app
 
 

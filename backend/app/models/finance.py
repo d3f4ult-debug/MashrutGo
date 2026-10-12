@@ -88,6 +88,9 @@ class Payment(Base):
 
     vehicle = relationship("Vehicle", back_populates="payments")
     refunds = relationship("Refund", back_populates="payment", cascade="all, delete-orphan")
+    driver = relationship("DriverProfile")
+    client_user = relationship("User", foreign_keys=[client_user_id])
+    route = relationship("Route")
 
 
 class Refund(Base):
@@ -102,6 +105,7 @@ class Refund(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     payment = relationship("Payment", back_populates="refunds")
+    driver = relationship("DriverProfile")
 
 
 class CashoutRequest(Base):
@@ -122,3 +126,7 @@ class CashoutRequest(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+
+    driver = relationship("DriverProfile")
+    uyushma = relationship("Uyushma")
+    approver = relationship("User", foreign_keys=[approved_by_user_id])

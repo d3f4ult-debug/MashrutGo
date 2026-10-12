@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     payme_secret_key: str = ""
     uzum_merchant_id: str = ""
     uzum_secret_key: str = ""
+    refund_grace_window_minutes: int = 15
 
     # --- Push Notifications: FCM ---
     fcm_enabled: bool = False

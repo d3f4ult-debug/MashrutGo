@@ -76,8 +76,8 @@ def driver_test_setup():
         db.refresh(vehicle)
 
         # Parking lot at isolated coordinates radius 150m (unique coordinates per test run to avoid collision)
-        p_lat = 41.2000 + (ts % 1000) * 0.005
-        p_lng = 71.5000 + (ts % 1000) * 0.005
+        p_lat = 51.0 + random.uniform(0.01, 10.0)
+        p_lng = 61.0 + random.uniform(0.01, 10.0)
         parking = Parking(
             name=f"Vokzal Stayanka {uid}",
             lat=p_lat,

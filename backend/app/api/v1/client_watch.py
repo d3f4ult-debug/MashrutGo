@@ -155,6 +155,42 @@ async def update_ride_state(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
+@router.post("/watch/board")
+async def board_vehicle(
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    """Client boards vehicle ('Mashinadaman'). Stops driver broadcast immediately for privacy."""
+    watch_id = payload.get("watchSessionId") or payload.get("watch_id")
+    if not watch_id:
+        raise HTTPException(status_code=400, detail="watch_id or watchSessionId required")
+    await client_watch_service.update_ride_state(
+        watch_id=int(watch_id),
+        state="on_car",
+        vehicle_id=payload.get("vehicle_id"),
+        db=db,
+    )
+    return {"status": "ON_VEHICLE", "broadcastStopped": True}
+
+
+@router.post("/watch/alight")
+async def alight_vehicle(
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    """Client alights from vehicle ('Tushdim'). Completes ride lifecycle."""
+    watch_id = payload.get("watchSessionId") or payload.get("watch_id")
+    if not watch_id:
+        raise HTTPException(status_code=400, detail="watch_id or watchSessionId required")
+    await client_watch_service.update_ride_state(
+        watch_id=int(watch_id),
+        state="exited",
+        vehicle_id=None,
+        db=db,
+    )
+    return {"status": "COMPLETED"}
+
+
 @router.get("/ride/current")
 async def get_current_ride(
     session_id: Optional[str] = Query(None),

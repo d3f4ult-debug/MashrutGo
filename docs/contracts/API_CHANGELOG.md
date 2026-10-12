@@ -47,6 +47,97 @@
 
 ## 2. Version History
 
+### [v0.9.0] — Stage 9: FCM-Ready Push Notifications & Device Token Management
+*Date: 2026-10-12*
+- **Pluggable Push Notification Architecture**:
+  - `BaseNotificationProvider` abstract interface (`send_to_token`, `send_multicast`, `send_to_topic`).
+  - `FCMNotificationProvider`: Google Firebase Cloud Messaging HTTP v1 adapter. Integrates `firebase-admin` SDK when credentials are configured. Graceful fallback mode if credentials file is omitted.
+  - `DevNoOpNotificationProvider`: Local development and test provider logging deliveries and maintaining an in-memory history without throwing errors or requiring external credentials.
+  - `NotificationService`: Resolves active provider, formats payloads, manages device tokens and user inboxes.
+- **Device Token Registration**:
+  - `POST /api/v1/notifications/device-token`: Register or refresh device token (`token`, `platform` [android/ios/web], `device_name`) for authenticated Client, Driver, or Admin.
+  - `DELETE /api/v1/notifications/device-token`: Deactivate / unregister device token on logout.
+  - `GET /api/v1/notifications/my-devices`: List active device tokens for the current user.
+- **In-App Notifications Inbox**:
+  - `GET /api/v1/notifications/inbox`: Paginated notifications inbox for the current user (`unread_only`, `skip`, `limit`).
+  - `POST /api/v1/notifications/inbox/{id}/read`: Mark specific notification as read.
+  - `POST /api/v1/notifications/inbox/read-all`: Mark all notifications as read.
+- **Admin Broadcast & Push Dispatch**:
+  - `POST /api/v1/notifications/broadcast`: Admin broadcasts push notification to a topic (e.g. `drivers`, `all`) or to a specific target `user_id`. Forbidden to Clients.
+  - `GET /api/v1/notifications/dev-history`: Super Admin inspects recent notifications logged by Dev No-Op provider.
+- **Event-Triggered Push Hooks**:
+  - `payment.received`: Triggered upon passenger scan & pay to alert the driver in real-time (`"Yangi to'lov qabul qilindi 💰"`).
+  - `payment.refunded`: Triggered upon payment refund to alert the passenger (`"To'lov qaytarildi ↩️"`).
+  - `cashout.status_updated`: Triggered upon Uyushma cashout approval, rejection, or payout to alert the driver (`"Cashout so'rovi yangilandi 🏦"`).
+  - `watch.arrival_alert`: Triggered when watched vehicle approaches destination stop (`"Mashrut yaqinlashmoqda 🚐"`).
+  - `shift.event`: Triggered on route or shift updates.
+
+### [v0.8.0] — Stage 8: Admin & Uyushma APIs, Dashboard, Soft-Delete & Audit Logs
+*Date: 2026-10-12*
+- **Tenant-Isolated Admin Dashboard**:
+  - `GET /api/v1/admin/dashboard`: Super Admin views platform-wide metrics (all Uyushmas, total/published routes, drivers, vehicles, online count, active shifts, parkings, ledger volume, payments, refunds, pending cashout volumes). Uyushma Admin receives strictly tenant-scoped metrics.
+- **Vehicles CRUD, Filter & 1-Driver-1-Vehicle Rule**:
+  - `GET /api/v1/admin/vehicles`: Paginated vehicle list with filters (`uyushma_id`, `route_id`, `driver_id`, `is_active`, `search`).
+  - `POST /api/v1/admin/vehicles`: Vehicle registration enforcing 1 driver -> 1 vehicle assignment rule.
+  - `PUT /api/v1/admin/vehicles/{id}`: Update vehicle specs, plate number, or driver assignment with duplicate assignment prevention.
+  - `DELETE /api/v1/admin/vehicles/{id}`: Soft-delete / archive vehicle (`is_active = False`) with audit trail.
+  - `GET /api/v1/uyushma/{id}/vehicles`: Tenant-isolated nested vehicle list.
+  - `POST /api/v1/uyushma/{id}/vehicles`: Direct vehicle registration under tenant.
+- **Drivers Management & Soft-Delete**:
+  - `GET /api/v1/admin/drivers`: Filter drivers by `uyushma_id`, `is_active`, or search by name/phone/license.
+  - `PUT /api/v1/admin/drivers/{id}`: Update driver license, full name, or active status.
+  - `DELETE /api/v1/admin/drivers/{id}`: Soft-delete driver (sets `is_active = False` on profile & user, de-assigns active vehicle).
+- **Tariffs (FareRules) CRUD & Archiving**:
+  - `GET /api/v1/admin/tariffs`: List fare rules filtered by route, rule type (`fixed`, `distance`, `zone`), and active status.
+  - `POST /api/v1/admin/tariffs`: Create route/uyushma tariff rule.
+  - `PUT /api/v1/admin/tariffs/{id}`: Update tariff parameters.
+  - `DELETE /api/v1/admin/tariffs/{id}`: Archive tariff rule (`is_active = False`).
+- **Clients Management & Security**:
+  - `GET /api/v1/admin/clients`: List platform clients with pagination and search.
+  - `PUT /api/v1/admin/clients/{id}`: Super Admin soft-blocks or unblocks client account (`is_active = False/True`). Forbidden to Uyushma Admins.
+- **Shifts & Live Status Monitoring**:
+  - `GET /api/v1/admin/shifts`: Monitor driver shifts with filters for Uyushma, route, driver, status (`active`/`completed`), and date range.
+  - `GET /api/v1/admin/live-status`: Real-time fleet overview showing all live vehicles, route distribution map, and vehicles in parking lots.
+- **Financial Audit & Reconciliation**:
+  - `GET /api/v1/admin/transactions`: Super Admin audit of double-entry wallet transactions ledger.
+  - `GET /api/v1/admin/refunds`: Audit and monitor refunded payments.
+- **System Settings & Audit Trail**:
+  - `GET /api/v1/admin/settings`: Retrieve global system configuration keys.
+  - `POST /api/v1/admin/settings`: Upsert configuration parameters.
+  - `GET /api/v1/admin/audit-logs`: Inspect immutable audit trail recording all administrative actions (`actor_user_id`, `actor_role`, `action`, `target_type`, `changes_json`).
+- **Uyushma Soft-Delete / Archive**:
+  - `DELETE /api/v1/uyushma/{id}`: Super Admin soft-deletes / archives Uyushma organization (`is_active = False`).
+
+### [v0.7.0] — Stage 7: Fare Engine, Double-Entry Wallet, Click Payments & Cashout
+*Date: 2026-10-12*
+- **Extensible Fare Engine**:
+  - `BaseFareEngine` abstract interface with MVP `FixedFareEngine`, `DistanceFareEngine`, `ZoneFareEngine`, and dynamic `FareService` registry.
+  - Automatically resolves active fixed route or Uyushma tariff rules (default 2,500 UZS).
+- **Double-Entry Audit-Friendly Wallet Ledger**:
+  - `WalletLedgerService`: Transaction-safe atomic mutations. Random `UPDATE` queries strictly prohibited.
+  - Typed ledger entry types: `topup`, `ride_payment`, `refund`, `adjustment`, `cashout`.
+  - Enforces non-negative balance on debits and deduplication via unique `idempotency_key`.
+  - Atomic double-entry `transfer` transferring fare between client and driver wallets.
+  - `GET /api/v1/wallet/balance`: Fetch client/driver wallet balance.
+  - `GET /api/v1/wallet/transactions`: Fetch paginated immutable ledger history.
+- **Click Payment Provider Adapter**:
+  - `ClickProviderAdapter`: Full implementation of Click Merchant protocol with MD5 signature validation.
+  - `POST /api/v1/wallet/topup/click`: Generates signed redirect checkout URL for client top-up.
+  - `POST /api/v1/payments/webhook/click`: Webhook endpoint processing `Prepare` (action=0) and `Complete` (action=1) actions with idempotency and ledger credit.
+  - Pluggable provider architecture with `BasePaymentProvider` and extension stubs for `Payme`, `Uzum`, and `HUMO`.
+- **Transport Scan & Pay**:
+  - `POST /api/v1/payments/scan-pay`: Client scans QR/NFC or enters vehicle internal ID (`internal_id`, e.g. `AND-101`), resolves vehicle and driver, resolves route fare, and executes atomic double-entry transfer.
+- **Driver Payments & Refund Protection**:
+  - `GET /api/v1/driver/payments`: Driver views payments received by their vehicle (strict tenant/driver isolation).
+  - `POST /api/v1/driver/payments/{id}/refund`: Driver refunds payment within configured grace window (15 mins) with duplicate protection and reverse ledger entry.
+- **Cashout Workflow**:
+  - `POST /api/v1/driver/cashout/request`: Driver submits cashout request of accumulated earnings with balance check.
+  - `GET /api/v1/driver/cashouts`: Driver lists personal cashout requests.
+  - `GET /api/v1/uyushma/cashouts`: Uyushma Admin reviews pending requests (tenant-isolated).
+  - `POST /api/v1/uyushma/cashout/{id}/approve`: Uyushma Admin approves request.
+  - `POST /api/v1/uyushma/cashout/{id}/reject`: Uyushma Admin rejects request with reason.
+  - `POST /api/v1/uyushma/cashout/{id}/pay`: Uyushma Admin marks paid and executes ledger debit from driver wallet.
+
 ### [v0.6.0] — Stage 4: Driver Shift, GPS Ingest, Realtime & Parking Geofence
 *Date: 2026-09-19*
 - **Driver Shift Lifecycle**:
