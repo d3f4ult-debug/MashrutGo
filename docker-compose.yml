@@ -13,7 +13,7 @@ services:
       - SECRET_KEY=mashrutgo-super-secret-key-prod-2026-uz
       - CORS_ORIGINS=*
     ports:
-      - "8000:8000"
+      - "8008:8000"
     volumes:
       - backend_data:/app/data
 
