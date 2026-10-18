@@ -16,225 +16,40 @@ let devSettings: AdminSystemSettings | null = null;
 let devAuditLogs: AuditLogEntry[] = [];
 
 function initDevData() {
-  if (devUyushmalar.length > 0) return;
-
-  const now = Date.now();
-  const minutesAgo = (m: number) => new Date(now - m * 60 * 1000).toISOString();
-  const hoursAgo = (h: number) => new Date(now - h * 3600 * 1000).toISOString();
-  const daysAgo = (d: number) => new Date(now - d * 86400 * 1000).toISOString();
-
-  devUyushmalar = [
-    {
-      id: 'uyushma-01',
-      name: 'Andijon Shahar Yo\'lovchi Tashish DUK',
-      region: 'Andijon viloyati, Andijon shahri',
-      contact_person: 'Erkin Mahmudov',
-      contact_phone: '+998 74 223 44 55',
-      admin_email: 'andijon.trans@mashrutgo.uz',
-      license_number: 'LNZ-AND-2024-091',
-      routes_count: 8,
-      drivers_count: 42,
-      vehicles_count: 45,
-      status: 'active',
-      created_at: daysAgo(120),
-    },
-    {
-      id: 'uyushma-02',
-      name: 'Asaka Trans Servis MCHJ',
-      region: 'Andijon viloyati, Asaka tumani',
-      contact_person: 'Dilshod Tursunov',
-      contact_phone: '+998 74 331 22 11',
-      admin_email: 'asaka.trans@mashrutgo.uz',
-      license_number: 'LNZ-AND-2024-114',
-      routes_count: 4,
-      drivers_count: 24,
-      vehicles_count: 26,
-      status: 'active',
-      created_at: daysAgo(90),
-    },
-    {
-      id: 'uyushma-03',
-      name: 'Shahrixon Avto Express XK',
-      region: 'Andijon viloyati, Shahrixon tumani',
-      contact_person: 'Nodirbek Yusupov',
-      contact_phone: '+998 74 445 10 20',
-      admin_email: 'shahrixon@mashrutgo.uz',
-      license_number: 'LNZ-AND-2023-048',
-      routes_count: 3,
-      drivers_count: 15,
-      vehicles_count: 15,
-      status: 'archived',
-      created_at: daysAgo(200),
-    },
-  ];
-
-  devClients = [
-    {
-      id: 'cli-001',
-      phone: '+998 90 555 11 22',
-      full_name: 'Sardorbek Aliyev',
-      wallet_balance: 45000,
-      total_rides: 84,
-      is_blocked: false,
-      last_active_at: minutesAgo(15),
-      created_at: daysAgo(45),
-    },
-    {
-      id: 'cli-002',
-      phone: '+998 91 666 33 44',
-      full_name: 'Malika Rahimova',
-      wallet_balance: 12000,
-      total_rides: 32,
-      is_blocked: false,
-      last_active_at: hoursAgo(2),
-      created_at: daysAgo(30),
-    },
-    {
-      id: 'cli-003',
-      phone: '+998 93 777 88 99',
-      full_name: 'Javohir Qosimov',
-      wallet_balance: 2000,
-      total_rides: 112,
-      is_blocked: true,
-      block_reason: 'To\'lov tizimida shubhali faollik qayd etilgan',
-      last_active_at: daysAgo(3),
-      created_at: daysAgo(60),
-    },
-    {
-      id: 'cli-004',
-      phone: '+998 94 888 00 11',
-      full_name: 'Nigora Karimova',
-      wallet_balance: 85000,
-      total_rides: 65,
-      is_blocked: false,
-      last_active_at: hoursAgo(5),
-      created_at: daysAgo(20),
-    },
-  ];
-
-  devShifts = [
-    {
-      id: 'shf-1',
-      driver_id: 'usr-driver-1',
-      driver_name: 'Anvar Qodirov',
-      driver_phone: '+998 90 123 45 67',
-      uyushma_id: 'uyushma-01',
-      uyushma_name: 'Andijon Shahar Yo\'lovchi Tashish DUK',
-      vehicle_id: 'veh-101',
-      vehicle_plate: '60 A 777 AA',
-      route_id: 'rt-101',
-      route_number: '12',
-      started_at: hoursAgo(3.5),
-      last_heartbeat_at: minutesAgo(1),
-      is_online: true,
-      current_lat: 40.785,
-      current_lng: 72.348,
-    },
-    {
-      id: 'shf-2',
-      driver_id: 'usr-driver-2',
-      driver_name: 'Jasur Saidov',
-      driver_phone: '+998 91 234 56 78',
-      uyushma_id: 'uyushma-01',
-      uyushma_name: 'Andijon Shahar Yo\'lovchi Tashish DUK',
-      vehicle_id: 'veh-102',
-      vehicle_plate: '60 B 123 BB',
-      route_id: 'rt-101',
-      route_number: '12',
-      started_at: hoursAgo(2.1),
-      last_heartbeat_at: minutesAgo(2),
-      is_online: true,
-      current_lat: 40.772,
-      current_lng: 72.355,
-    },
-    {
-      id: 'shf-4',
-      driver_id: 'usr-driver-4',
-      driver_name: 'Bobur Xolmatov',
-      driver_phone: '+998 94 456 78 90',
-      uyushma_id: 'uyushma-01',
-      uyushma_name: 'Andijon Shahar Yo\'lovchi Tashish DUK',
-      vehicle_id: 'veh-104',
-      vehicle_plate: '60 D 999 DD',
-      route_id: 'rt-103',
-      route_number: '24',
-      started_at: hoursAgo(1.2),
-      last_heartbeat_at: minutesAgo(1),
-      is_online: true,
-      current_lat: 40.791,
-      current_lng: 72.339,
-    },
-  ];
-
-  devSettings = {
-    gps_interval_seconds: 5,
-    refund_window_minutes: 30,
-    platform_commission_percent: 1.0,
-    maintenance_mode: false,
-    fcm_notifications_enabled: true,
-    max_unassigned_vehicles: 50,
-    updated_at: daysAgo(5),
-    updated_by: 'Super Admin',
-  };
-
-  devAuditLogs = [
-    {
-      id: 'aud-001',
-      timestamp: minutesAgo(10),
-      actor_id: 'usr-admin-1',
-      actor_name: 'Super Admin',
-      actor_role: 'super_admin',
-      action_type: 'update_system_settings',
-      entity_type: 'settings',
-      entity_id: 'global-config',
-      description: 'GPS yuborish intervali 5 soniyaga yangilandi',
-      ip_address: '192.168.1.45',
-    },
-    {
-      id: 'aud-002',
-      timestamp: hoursAgo(2),
-      actor_id: 'usr-admin-1',
-      actor_name: 'Super Admin',
-      actor_role: 'super_admin',
-      action_type: 'create_uyushma',
-      entity_type: 'uyushma',
-      entity_id: 'uyushma-02',
-      description: 'Yangi uyushma yaratildi: Asaka Trans Servis MCHJ',
-      ip_address: '192.168.1.45',
-    },
-    {
-      id: 'aud-003',
-      timestamp: daysAgo(1),
-      actor_id: 'usr-admin-1',
-      actor_name: 'Super Admin',
-      actor_role: 'super_admin',
-      action_type: 'block_client',
-      entity_type: 'client',
-      entity_id: 'cli-003',
-      description: 'Mijoz akkaunti bloklandi',
-      audit_reason: 'To\'lov tizimida shubhali faollik qayd etilgan',
-      ip_address: '192.168.1.45',
-    },
-  ];
+  devUyushmalar = [];
+  devClients = [];
+  devShifts = [];
+  devAuditLogs = [];
 }
 
 export const adminApi = {
   // ── Global KPIs ──
   async getGlobalKPIs(): Promise<AdminGlobalKPIs> {
     try {
-      return await apiClient.get<AdminGlobalKPIs>('/admin/kpis');
-    } catch {
-      initDevData();
+      const dash = await apiClient.get<any>('/admin/dashboard');
       return {
-        total_uyushmalar: devUyushmalar.filter(u => u.status === 'active').length,
-        total_routes: 15,
-        total_drivers: 81,
-        total_vehicles: 86,
-        active_shifts: devShifts.filter(s => s.is_online).length,
-        total_clients: devClients.length + 1420,
-        total_parkings: 12,
-        today_gross_revenue: 5240000,
-        today_platform_commission: 52400,
+        total_uyushmalar: dash.total_uyushmas ?? 0,
+        total_routes: dash.total_routes ?? 0,
+        total_drivers: dash.total_drivers ?? 0,
+        total_vehicles: dash.total_vehicles ?? 0,
+        active_shifts: dash.active_shifts_count ?? 0,
+        total_clients: dash.total_clients ?? 0,
+        total_parkings: dash.total_parkings ?? 0,
+        today_gross_revenue: dash.total_payment_volume_uzs ?? 0,
+        today_platform_commission: Math.round((dash.total_payment_volume_uzs ?? 0) * 0.01),
+        system_status: 'healthy',
+      };
+    } catch {
+      return {
+        total_uyushmalar: 0,
+        total_routes: 0,
+        total_drivers: 0,
+        total_vehicles: 0,
+        active_shifts: 0,
+        total_clients: 0,
+        total_parkings: 0,
+        today_gross_revenue: 0,
+        today_platform_commission: 0,
         system_status: 'healthy',
       };
     }
@@ -332,9 +147,20 @@ export const adminApi = {
   // ── Clients Management ──
   async getClients(): Promise<AdminClientUser[]> {
     try {
-      return await apiClient.get<AdminClientUser[]>('/admin/clients');
+      const res = await apiClient.get<any>('/admin/clients');
+      const list = Array.isArray(res) ? res : (res?.items || []);
+      return list.map((c: any) => ({
+        id: String(c.id),
+        phone: c.phone || '',
+        full_name: c.full_name || 'Yo‘lovchi',
+        wallet_balance: c.wallet_balance_uzs ?? c.wallet_balance ?? 0,
+        total_rides: c.rides_count ?? c.total_rides ?? 0,
+        is_blocked: c.is_blocked !== undefined ? c.is_blocked : !c.is_active,
+        block_reason: c.block_reason,
+        last_active_at: c.last_active_at || c.created_at,
+        created_at: c.created_at || new Date().toISOString(),
+      }));
     } catch {
-      initDevData();
       return [...devClients];
     }
   },

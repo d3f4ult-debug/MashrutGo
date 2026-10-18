@@ -131,6 +131,15 @@ export function UyushmaDrivers() {
     setDrivers(prev => prev.filter(d => d.id !== driverId));
   };
 
+  const handleVerifyDriver = async (driverId: string) => {
+    try {
+      await uyushmaApi.verifyDriver(uyushmaId, driverId);
+      setDrivers(prev => prev.map(d => (d.id === driverId ? { ...d, is_active: true } : d)));
+    } catch (err: any) {
+      alert(err?.message || 'Haydovchini tasdiqlashda xatolik yuz berdi');
+    }
+  };
+
   const filteredDrivers = drivers.filter(d => {
     const q = searchQuery.toLowerCase();
     return (
@@ -256,11 +265,33 @@ export function UyushmaDrivers() {
                   </td>
                   <td>
                     <span className={`status-pill ${d.is_active ? 'active' : 'inactive'}`}>
-                      {d.is_active ? 'Faol' : 'Bloklangan'}
+                      {d.is_active ? 'Faol' : 'Tasdiqlash kutilmoqda'}
                     </span>
                   </td>
                   <td>
-                    <div className="table-actions" style={{ justifyContent: 'flex-end' }}>
+                    <div className="table-actions" style={{ justifyContent: 'flex-end', gap: '0.35rem' }}>
+                      {!d.is_active && (
+                        <button
+                          className="btn-table-action"
+                          onClick={() => handleVerifyDriver(d.id)}
+                          title="Haydovchini tasdiqlash"
+                          style={{
+                            backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                            color: '#10b981',
+                            borderColor: 'rgba(16, 185, 129, 0.3)',
+                            padding: '0.25rem 0.5rem',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                            borderRadius: '4px'
+                          }}
+                        >
+                          <i className="ri-checkbox-circle-line" />
+                          Tasdiqlash
+                        </button>
+                      )}
                       <button
                         className="btn-table-action"
                         onClick={() => openEditModal(d)}

@@ -20,7 +20,7 @@ export const uz = {
     heading: 'Qayerga bormoqchisiz?',
     originPlaceholder: 'Qayerdan? (Joriy joylashuv)',
     destPlaceholder: 'Qayerga? (Manzil yoki bekat)',
-    routeNumberPlaceholder: 'Marshrut raqami (masalan: 15, 22, 7)',
+    routeNumberPlaceholder: 'Marshrut raqamini kiriting...',
     useCurrentLocation: 'Joriy joylashuvim',
     locationDenied: 'GPS ruxsat berilmadi. Manzilni qo‘lda kiriting.',
     locationError: 'Joylashuvni aniqlab bo‘lmadi',

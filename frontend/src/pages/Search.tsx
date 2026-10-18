@@ -109,10 +109,13 @@ export default function Search() {
         executeSearch(txt, toInput)
       })
       .catch(() => {
-        // graceful fallback
+        const txt = uz.search.useCurrentLocation
+        setFromInput(txt)
+        executeSearch(txt, toInput)
       })
       .finally(() => setGpsLoading(false))
   }
+
 
   const handleToInputChange = (val: string) => {
     setToInput(val)
@@ -437,7 +440,7 @@ export default function Search() {
                 </span>
               )}
             </div>
-            <div className="h-80 sm:h-[460px] w-full relative">
+            <div className="h-[420px] sm:h-[560px] lg:h-[620px] w-full relative">
               <AppMap ref={mapRef} onMapReady={handleMapReady} />
             </div>
           </div>

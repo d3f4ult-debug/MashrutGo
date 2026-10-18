@@ -13,49 +13,38 @@ export function LoginPage() {
   const { login, isAuthenticated, user } = useAuth();
   const location = useLocation();
 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [identifier, setIdentifier] = useState('Admin');
+  const [password, setPassword] = useState('Adminkeldi1');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   // If already authenticated, redirect to role home cleanly using <Navigate />
   if (isAuthenticated && user) {
-    const roleHome: Record<UserRole, string> = {
+    const roleHome: Record<string, string> = {
       driver: '/driver',
       uyushma: '/uyushma',
+      uyushma_admin: '/uyushma',
       admin: '/admin',
+      super_admin: '/admin',
+      client: '/',
     };
-    const from = (location.state as { from?: { pathname: string } })?.from?.pathname || roleHome[user.role];
+    const from = (location.state as { from?: { pathname: string } })?.from?.pathname || roleHome[user.role] || '/';
     return <Navigate to={from} replace />;
   }
-
-  // Dev mode quick login (bypass backend)
-  const devLogin = (role: UserRole) => {
-    const mockUsers: Record<UserRole, { id: string; email: string; full_name: string; role: UserRole }> = {
-      driver: { id: 'dev-driver-1', email: 'driver@test.uz', full_name: 'Test Haydovchi', role: 'driver' },
-      uyushma: { id: 'dev-uyushma-1', email: 'uyushma@test.uz', full_name: 'Test Uyushma', role: 'uyushma' },
-      admin: { id: 'dev-admin-1', email: 'admin@test.uz', full_name: 'Super Admin', role: 'admin' },
-    };
-    localStorage.setItem('auth_token', `dev-token-${role}`);
-    localStorage.setItem('auth_user', JSON.stringify(mockUsers[role]));
-    window.location.reload();
-  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+
+    const val = identifier.trim();
+    const formattedLogin = val.toLowerCase() === 'admin' ? 'Admin' : (val.startsWith('+') ? val : `+${val}`);
+
     try {
-      await login({ email, password });
-    } catch {
-      // Graceful offline fallback: if backend is unreachable, login with demo user
-      const lower = email.toLowerCase();
-      const role: UserRole = lower.includes('admin')
-        ? 'admin'
-        : lower.includes('uyushma')
-        ? 'uyushma'
-        : 'driver';
-      devLogin(role);
+      await login({ phone: formattedLogin, password });
+    } catch (err: any) {
+      const msg = err?.message || 'Login yoki parol noto‘g‘ri kiritildi';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -67,38 +56,38 @@ export function LoginPage() {
         {/* Brand */}
         <div className="login-brand">
           <div className="login-brand__logo">
-            <i className="ri-bus-2-fill" />
+            <i className="ri-shield-keyhole-fill" />
           </div>
           <h1>MashrutGo</h1>
-          <p>Andijon Smart Transport Platform</p>
+          <p>Super Admin boshqaruv tizimi</p>
         </div>
 
         {/* Login form */}
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="login-form__field">
-            <label htmlFor="login-email">Email</label>
+            <label htmlFor="login-identifier">Foydalanuvchi nomi / Login</label>
             <div className="login-form__input-wrap">
-              <i className="ri-mail-line" />
+              <i className="ri-user-star-line" />
               <input
-                id="login-email"
-                type="email"
-                placeholder="email@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                id="login-identifier"
+                type="text"
+                placeholder="Admin"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 required
-                autoComplete="email"
+                autoComplete="username"
               />
             </div>
           </div>
 
           <div className="login-form__field">
-            <label htmlFor="login-password">Parol</label>
+            <label htmlFor="login-password">Admin Paroli</label>
             <div className="login-form__input-wrap">
               <i className="ri-lock-2-line" />
               <input
                 id="login-password"
                 type="password"
-                placeholder="••••••••"
+                placeholder="Adminkeldi1"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -121,31 +110,18 @@ export function LoginPage() {
                 Kirish...
               </>
             ) : (
-              'Kirish'
+              'Tizimga kirish'
             )}
           </button>
         </form>
 
-        {/* Quick Demo Access Buttons */}
-        <div className="login-dev-panel">
-          <span className="login-dev-panel__label">Tezkor demo rejimida kirish:</span>
-          <div className="login-dev-panel__buttons">
-            <button type="button" onClick={() => devLogin('driver')} className="login-dev-btn login-dev-btn--driver">
-              <i className="ri-steering-2-line" /> Haydovchi
-            </button>
-            <button type="button" onClick={() => devLogin('uyushma')} className="login-dev-btn login-dev-btn--uyushma">
-              <i className="ri-building-2-line" /> Uyushma
-            </button>
-            <button type="button" onClick={() => devLogin('admin')} className="login-dev-btn login-dev-btn--admin">
-              <i className="ri-shield-star-line" /> Admin
-            </button>
-          </div>
-        </div>
-
-        {/* Back to Client PWA */}
-        <div style={{ textAlign: 'center', marginTop: '1.25rem' }}>
-          <Link to="/" style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}>
-            <i className="ri-arrow-left-line" /> Mijozlar ilovasiga qaytish
+        {/* Back to Client PWA & Role Selector */}
+        <div style={{ textAlign: 'center', marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <Link to="/" style={{ fontSize: '0.85rem', color: 'var(--accent-primary, #2563eb)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem' }}>
+            <i className="ri-user-shared-line" /> Yo‘lovchi yoki Haydovchi sifatida kirish
+          </Link>
+          <Link to="/" style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem' }}>
+            <i className="ri-arrow-left-line" /> Bosh sahifaga qaytish
           </Link>
         </div>
       </div>
@@ -154,3 +130,4 @@ export function LoginPage() {
 }
 
 export default LoginPage;
+

@@ -1,0 +1,33 @@
+services:
+  # ── FastAPI Backend API & WebSocket ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mashrutgo_backend
+    restart: always
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=sqlite:///./app.db
+      - DEVSMS_API_KEY=185c8a1dff0cf6b047a6526ba07bb32d6d34f4a606feddd21a713e9a85673a85
+      - SECRET_KEY=mashrutgo-super-secret-key-prod-2026-uz
+      - CORS_ORIGINS=*
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_data:/app/data
+
+  # ── Frontend Web & Admin Panel (Nginx) ──
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mashrutgo_frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  backend_data:

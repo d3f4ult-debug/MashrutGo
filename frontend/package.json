@@ -12,6 +12,9 @@
     "test:dev3": "npx tsx --test src/tests/*.test.ts"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/cli": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
     "@tanstack/react-query": "4.35.0",
     "maplibre-gl": "2.4.0",
     "react": "18.2.0",

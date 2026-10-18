@@ -68,6 +68,10 @@ export default function RouteDetails() {
     fitBoundsToCoordinates(map, currentGeometry)
   }, [map, routeData, routeNumber, direction])
 
+  const [navigatingVehicleId, setNavigatingVehicleId] = useState<string | null>(null)
+  const navigatingRef = React.useRef<string | null>(null)
+  navigatingRef.current = navigatingVehicleId
+
   // Subscribe to live vehicle websocket stream
   useEffect(() => {
     if (!routeNumber) return
@@ -79,8 +83,21 @@ export default function RouteDetails() {
           addMarker(map, `veh-${v.id}`, v.coordinates, {
             type: 'vehicle',
             label: routeNumber,
-            isStale: v.isStale
+            isStale: v.isStale,
+            heading: v.headingDeg
           })
+
+          // Navigator mode: follow chosen vehicle in 3D street perspective
+          if (navigatingRef.current && v.id === navigatingRef.current) {
+            map.easeTo({
+              center: v.coordinates,
+              bearing: v.headingDeg,
+              pitch: 62,
+              zoom: 17,
+              duration: 1000,
+              easing: (t: number) => t
+            })
+          }
         })
       }
     })
@@ -152,18 +169,13 @@ export default function RouteDetails() {
         {/* Live Status Pills */}
         <div className="mt-3 pt-3 border-t border-neutral-100 flex items-center justify-between text-xs">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="font-semibold text-neutral-800">
-              {vehicles.length > 0
-                ? `${vehicles.length} ta mashina liniyada`
-                : uz.alternatives.noLiveVehicles}
+            <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200/80 rounded-full text-[11px] font-semibold flex items-center gap-1.5 shadow-2xs">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+              Jonli GPS haydovchilar — Tez kunda (Upcoming feature)
             </span>
           </div>
 
           <div className="flex items-center gap-3 text-neutral-500">
-            <span>
-              Bekatda kutayotgan: <strong>{routeData.parkedVehiclesCount} ta</strong>
-            </span>
             <button
               onClick={() => setIsPayModalOpen(true)}
               className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-xs flex items-center gap-1"
@@ -192,7 +204,7 @@ export default function RouteDetails() {
                 WebSocket Jonli
               </span>
             </div>
-            <div className="h-80 sm:h-[420px] w-full relative">
+            <div className="h-[420px] sm:h-[560px] lg:h-[620px] w-full relative">
               <AppMap onMapReady={handleMapReady} />
             </div>
           </div>
@@ -237,21 +249,53 @@ export default function RouteDetails() {
                       </div>
                     </div>
 
-                    <div className="text-right">
-                      {v.etaMinutesToNextStop !== null && v.etaMinutesToNextStop !== undefined ? (
-                        <div className="font-bold text-blue-700">
-                          ~{v.etaMinutesToNextStop} daqiqa
-                        </div>
-                      ) : (
-                        <div className="text-[10px] text-neutral-400">
-                          {uz.routeDetails.etaCalculating}
-                        </div>
-                      )}
-                      {v.isStale && (
-                        <span className="text-[10px] text-amber-600 font-semibold block">
-                          Eskirgan ma’lumot
+                    <div className="flex items-center gap-2">
+                      <div className="text-right">
+                        {v.etaMinutesToNextStop !== null && v.etaMinutesToNextStop !== undefined ? (
+                          <div className="font-bold text-blue-700">
+                            ~{v.etaMinutesToNextStop} daqiqa
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-neutral-400">
+                            {uz.routeDetails.etaCalculating}
+                          </div>
+                        )}
+                        {v.isStale && (
+                          <span className="text-[10px] text-amber-600 font-semibold block">
+                            Eskirgan ma’lumot
+                          </span>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = navigatingVehicleId === v.id ? null : v.id
+                          setNavigatingVehicleId(next)
+                          if (map && next) {
+                            map.flyTo({
+                              center: v.coordinates,
+                              zoom: 17,
+                              pitch: 62,
+                              bearing: v.headingDeg,
+                              duration: 1200
+                            })
+                          } else if (map && !next) {
+                            fitBoundsToCoordinates(map, currentGeometry)
+                          }
+                        }}
+                        className={`p-2 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
+                          navigatingVehicleId === v.id
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 text-neutral-700'
+                        }`}
+                        title="3D Navigatsiya: mashina ortidan kuzatish"
+                      >
+                        <i className={navigatingVehicleId === v.id ? 'ri-compass-3-fill' : 'ri-navigation-line'}></i>
+                        <span className="hidden sm:inline">
+                          {navigatingVehicleId === v.id ? 'Kuzatilmoqda' : '3D Kuzatish'}
                         </span>
-                      )}
+                      </button>
                     </div>
                   </div>
                 ))}

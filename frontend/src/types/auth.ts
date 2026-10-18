@@ -1,18 +1,20 @@
 // Auth types — shared across all role UIs
-export type UserRole = 'driver' | 'uyushma' | 'admin';
+export type UserRole = 'driver' | 'uyushma' | 'admin' | 'super_admin' | 'uyushma_admin' | 'client';
 
 export interface AuthUser {
-  id: string;
-  email: string;
+  id: string | number;
+  phone?: string;
+  email?: string;
   full_name: string;
   role: UserRole;
-  uyushma_id?: string;    // only for uyushma/driver
-  vehicle_id?: string;    // only for driver
-  route_id?: string;      // only for driver
+  uyushma_id?: string | number;    // only for uyushma/driver
+  vehicle_id?: string | number;    // only for driver
+  route_id?: string | number;      // only for driver
+  is_verified?: boolean;
 }
 
 export interface LoginCredentials {
-  email: string;
+  phone: string;
   password: string;
 }
 
@@ -22,3 +24,4 @@ export interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
 }
+

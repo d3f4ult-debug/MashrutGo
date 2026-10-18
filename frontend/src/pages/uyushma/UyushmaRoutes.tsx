@@ -24,10 +24,6 @@ export function UyushmaRoutes() {
   const [routeName, setRouteName] = useState('');
   const [description, setDescription] = useState('');
   const [isActive, setIsActive] = useState(true);
-  const [outboundStart, setOutboundStart] = useState('Bosh bekat (A)');
-  const [outboundEnd, setOutboundEnd] = useState('Oxirgi bekat (B)');
-  const [inboundStart, setInboundStart] = useState('Oxirgi bekat (B)');
-  const [inboundEnd, setInboundEnd] = useState('Bosh bekat (A)');
 
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -53,10 +49,6 @@ export function UyushmaRoutes() {
     setRouteName('');
     setDescription('');
     setIsActive(true);
-    setOutboundStart('Bosh bekat (A)');
-    setOutboundEnd('Oxirgi bekat (B)');
-    setInboundStart('Oxirgi bekat (B)');
-    setInboundEnd('Bosh bekat (A)');
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -67,50 +59,45 @@ export function UyushmaRoutes() {
     setRouteName(r.route_name);
     setDescription(r.description || '');
     setIsActive(r.is_active);
-
-    const outDir = r.directions.find(d => d.direction === 'outbound');
-    const inDir = r.directions.find(d => d.direction === 'inbound');
-
-    setOutboundStart(outDir?.start_name || 'Bosh bekat (A)');
-    setOutboundEnd(outDir?.end_name || 'Oxirgi bekat (B)');
-    setInboundStart(inDir?.start_name || 'Oxirgi bekat (B)');
-    setInboundEnd(inDir?.end_name || 'Bosh bekat (A)');
-
     setFormError(null);
     setIsModalOpen(true);
   };
 
-  const handleSaveRoute = async (e: React.FormEvent) => {
+  const handleSaveRoute = async (e: React.FormEvent, openEditorAfter = false) => {
     e.preventDefault();
     if (!routeNumber.trim() || !routeName.trim()) {
       setFormError("Yo'nalish raqami va nomi majburiy.");
       return;
     }
 
+    const startLabel = routeName.includes('—') ? routeName.split('—')[0].trim() : (routeName.split('-')[0]?.trim() || "Bosh nuqta");
+    const endLabel = routeName.includes('—') ? routeName.split('—')[1].trim() : (routeName.split('-')[1]?.trim() || "Oxirgi nuqta");
+
     const directions: RouteDirectionConfig[] = [
       {
         id: editingRoute?.directions?.[0]?.id || `dir-${Date.now()}-out`,
         direction: 'outbound',
-        start_name: outboundStart,
-        end_name: outboundEnd,
-        stops_count: editingRoute?.directions?.[0]?.stops_count || 12,
-        distance_km: editingRoute?.directions?.[0]?.distance_km || 10.5,
-        estimated_duration_min: editingRoute?.directions?.[0]?.estimated_duration_min || 25,
+        start_name: startLabel,
+        end_name: endLabel,
+        stops_count: 0,
+        distance_km: editingRoute?.directions?.[0]?.distance_km || 0,
+        estimated_duration_min: editingRoute?.directions?.[0]?.estimated_duration_min || 0,
         is_active: true,
       },
       {
         id: editingRoute?.directions?.[1]?.id || `dir-${Date.now()}-in`,
         direction: 'inbound',
-        start_name: inboundStart,
-        end_name: inboundEnd,
-        stops_count: editingRoute?.directions?.[1]?.stops_count || 12,
-        distance_km: editingRoute?.directions?.[1]?.distance_km || 10.5,
-        estimated_duration_min: editingRoute?.directions?.[1]?.estimated_duration_min || 25,
+        start_name: endLabel,
+        end_name: startLabel,
+        stops_count: 0,
+        distance_km: editingRoute?.directions?.[1]?.distance_km || 0,
+        estimated_duration_min: editingRoute?.directions?.[1]?.estimated_duration_min || 0,
         is_active: true,
       },
     ];
 
     try {
+      let savedRouteId = editingRoute?.id;
       if (editingRoute) {
         const updated = await uyushmaApi.updateRoute(uyushmaId, editingRoute.id, {
           route_number: routeNumber,
@@ -120,6 +107,7 @@ export function UyushmaRoutes() {
           directions,
         });
         setRoutes(prev => prev.map(r => (r.id === updated.id ? updated : r)));
+        savedRouteId = updated.id;
       } else {
         const created = await uyushmaApi.createRoute(uyushmaId, {
           route_number: routeNumber,
@@ -129,8 +117,13 @@ export function UyushmaRoutes() {
           directions,
         });
         setRoutes(prev => [created, ...prev]);
+        savedRouteId = created.id;
       }
       setIsModalOpen(false);
+
+      if (openEditorAfter && savedRouteId) {
+        navigate(`/uyushma/routes/editor/${savedRouteId}`);
+      }
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : 'Xatolik yuz berdi');
     }
@@ -202,7 +195,7 @@ export function UyushmaRoutes() {
             <tr>
               <th>Raqam</th>
               <th>Yo'nalish nomi</th>
-              <th>Yo'nalish qismlari (Directions)</th>
+              <th>Marshrut chizig'i (Xarita)</th>
               <th>Transportlar</th>
               <th>Haydovchilar</th>
               <th>Holat</th>
@@ -238,11 +231,11 @@ export function UyushmaRoutes() {
                   <td>
                     <button
                       className="btn-secondary-action"
-                      style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}
-                      onClick={() => setSelectedRouteDirections(r)}
+                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                      onClick={() => navigate(`/uyushma/routes/editor/${r.id}`)}
                     >
-                      <i className="ri-guide-line" />
-                      2 ta yo'nalish (A ⇄ B)
+                      <i className="ri-pencil-ruler-2-line" style={{ color: 'var(--accent-primary)' }} />
+                      Xaritada chizish / tahrirlash
                     </button>
                   </td>
                   <td>
@@ -262,9 +255,9 @@ export function UyushmaRoutes() {
                       <button
                         className="btn-table-action"
                         onClick={() => navigate(`/uyushma/routes/editor/${r.id}`)}
-                        title="Visual Route Editor (Xaritada tahrirlash)"
+                        title="Visual Route Editor (Xaritada chizish)"
                       >
-                        <i className="ri-map-pin-line" style={{ color: 'var(--accent-primary)' }} />
+                        <i className="ri-pencil-ruler-2-line" style={{ color: 'var(--accent-primary)' }} />
                       </button>
                       <button
                         className="btn-table-action"
@@ -303,7 +296,7 @@ export function UyushmaRoutes() {
               </button>
             </div>
 
-            <form onSubmit={handleSaveRoute}>
+            <form onSubmit={(e) => handleSaveRoute(e, false)}>
               <div className="uyushma-modal-body">
                 {formError && (
                   <div className="rule-conflict-alert">
@@ -355,59 +348,10 @@ export function UyushmaRoutes() {
                   <textarea
                     className="uyushma-textarea"
                     rows={2}
-                    placeholder="Magistral, bekatlar va oraliq nuqtalar haqida ma'lumot..."
+                    placeholder="Marshrut, ko'chalar yoki yo'nalish haqida qisqacha ma'lumot..."
                     value={description}
                     onChange={e => setDescription(e.target.value)}
                   />
-                </div>
-
-                <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
-                  <label style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.5rem', display: 'block' }}>
-                    <i className="ri-compass-3-line" style={{ color: 'var(--accent-primary)', marginRight: '0.4rem' }} />
-                    Yo'nalish qismlari (Outbound va Inbound)
-                  </label>
-
-                  <div className="form-grid-2" style={{ marginBottom: '0.75rem' }}>
-                    <div className="uyushma-form-group">
-                      <label>Borish (Outbound) — Bosh bekat</label>
-                      <input
-                        type="text"
-                        className="uyushma-input"
-                        value={outboundStart}
-                        onChange={e => setOutboundStart(e.target.value)}
-                      />
-                    </div>
-                    <div className="uyushma-form-group">
-                      <label>Borish (Outbound) — Oxirgi bekat</label>
-                      <input
-                        type="text"
-                        className="uyushma-input"
-                        value={outboundEnd}
-                        onChange={e => setOutboundEnd(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-grid-2">
-                    <div className="uyushma-form-group">
-                      <label>Qaytish (Inbound) — Bosh bekat</label>
-                      <input
-                        type="text"
-                        className="uyushma-input"
-                        value={inboundStart}
-                        onChange={e => setInboundStart(e.target.value)}
-                      />
-                    </div>
-                    <div className="uyushma-form-group">
-                      <label>Qaytish (Inbound) — Oxirgi bekat</label>
-                      <input
-                        type="text"
-                        className="uyushma-input"
-                        value={inboundEnd}
-                        onChange={e => setInboundEnd(e.target.value)}
-                      />
-                    </div>
-                  </div>
                 </div>
               </div>
 
@@ -419,9 +363,17 @@ export function UyushmaRoutes() {
                 >
                   Bekor qilish
                 </button>
-                <button type="submit" className="btn-primary-action">
+                <button type="submit" className="btn-secondary-action">
                   <i className="ri-save-line" />
                   Saqlash
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary-action"
+                  onClick={(e) => handleSaveRoute(e, true)}
+                >
+                  <i className="ri-pencil-ruler-2-line" />
+                  Saqlash va Xaritada chizish
                 </button>
               </div>
             </form>

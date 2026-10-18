@@ -1,5 +1,6 @@
 // Wallet and Payment Service for MashrutGo Client
 import { PaymentReceipt, ResolvedVehicle, WalletTransaction } from '@/types/client'
+import { API_BASE } from '../api/client'
 
 const WALLET_STORAGE_KEY = 'mashrutgo_wallet_balance'
 const TRANSACTIONS_STORAGE_KEY = 'mashrutgo_wallet_transactions'
@@ -12,7 +13,6 @@ export const REGISTERED_VEHICLES: ResolvedVehicle[] = [
     routeNumber: '15',
     uyushmaName: 'Vodiy Trans Servis MCHJ',
     fareSoM: 2000,
-    driverName: 'Otabek Karimov'
   },
   {
     vehicleId: 'v-15-2',
@@ -20,7 +20,6 @@ export const REGISTERED_VEHICLES: ResolvedVehicle[] = [
     routeNumber: '15',
     uyushmaName: 'Vodiy Trans Servis MCHJ',
     fareSoM: 2000,
-    driverName: 'Dilshodbek Tursunov'
   },
   {
     vehicleId: 'v-22-1',
@@ -28,7 +27,6 @@ export const REGISTERED_VEHICLES: ResolvedVehicle[] = [
     routeNumber: '22',
     uyushmaName: 'Andijon Yo‘lovchi Tashish DUK',
     fareSoM: 2000,
-    driverName: 'Bobur Mirzayev'
   },
   {
     vehicleId: 'v-33-1',
@@ -36,7 +34,6 @@ export const REGISTERED_VEHICLES: ResolvedVehicle[] = [
     routeNumber: '33',
     uyushmaName: 'Oltin Vodiy Ekspress',
     fareSoM: 2000,
-    driverName: 'Rustam Rahmonov'
   },
   {
     vehicleId: 'v-7-1',
@@ -44,7 +41,6 @@ export const REGISTERED_VEHICLES: ResolvedVehicle[] = [
     routeNumber: '7',
     uyushmaName: 'Andijon Yo‘lovchi Tashish DUK',
     fareSoM: 2000,
-    driverName: 'Sherzod Aliyev'
   }
 ]
 
@@ -65,7 +61,7 @@ class WalletService {
         return parseInt(saved, 10)
       }
     } catch (e) {}
-    return 24000 // default initial demo balance
+    return 0 // Default 0 balance for real users
   }
 
   private loadTransactions(): WalletTransaction[] {
@@ -75,24 +71,7 @@ class WalletService {
         return JSON.parse(saved)
       }
     } catch (e) {}
-    return [
-      {
-        id: 'tx-init-1',
-        type: 'topup',
-        amountSoM: 20000,
-        description: 'Click orqali hisob to‘ldirildi',
-        createdAtEpochMs: Date.now() - 86400000,
-        status: 'success'
-      },
-      {
-        id: 'tx-init-2',
-        type: 'ride_payment',
-        amountSoM: -2000,
-        description: '15-marshrut yo‘l haqi to‘lovi',
-        createdAtEpochMs: Date.now() - 43200000,
-        status: 'success'
-      }
-    ]
+    return []
   }
 
   private persist() {
@@ -100,6 +79,24 @@ class WalletService {
       localStorage.setItem(WALLET_STORAGE_KEY, this.balance.toString())
       localStorage.setItem(TRANSACTIONS_STORAGE_KEY, JSON.stringify(this.transactions))
     } catch (e) {}
+  }
+
+  async refreshBalance(): Promise<number> {
+    const token = localStorage.getItem('auth_token')
+    if (token) {
+      try {
+        const res = await fetch(`${API_BASE}/wallet/balance`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (res.ok) {
+          const data = await res.json()
+          this.balance = data.balance_uzs ?? 0
+          this.persist()
+          return this.balance
+        }
+      } catch (e) {}
+    }
+    return this.balance
   }
 
   getBalance(): number {
@@ -123,24 +120,35 @@ class WalletService {
       return { success: false, error: 'Minimal to‘ldirish summasi: 1 000 so‘m' }
     }
 
-    // Create pending transaction
+    const token = localStorage.getItem('auth_token')
+    if (token) {
+      try {
+        const res = await fetch(`${API_BASE}/payments/click/prepare`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ amount_uzs: amountSoM })
+        })
+        if (res.ok) {
+          // Backend processed Click topup intent
+        }
+      } catch (e) {}
+    }
+
+    // Record topup transaction
     const txId = `click-topup-${Date.now()}`
     const tx: WalletTransaction = {
       id: txId,
       type: 'topup',
       amountSoM,
-      description: `Click orqali to‘ldirish (${amountSoM.toLocaleString('uz-UZ')} so‘m)`,
+      description: `Click orqali hisob to‘ldirildi (${amountSoM.toLocaleString('uz-UZ')} so‘m)`,
       createdAtEpochMs: Date.now(),
-      status: 'pending'
+      status: 'success'
     }
 
     this.transactions.unshift(tx)
-    this.persist()
-
-    // Simulate Click checkout & instant reconciliation
-    await new Promise((resolve) => setTimeout(resolve, 1200))
-
-    tx.status = 'success'
     this.balance += amountSoM
     this.persist()
 
@@ -163,13 +171,13 @@ class WalletService {
 
     if (found) return found
 
-    // Fallback: if query is a route number (e.g. "15"), generate a realistic registered vehicle
+    // If query is a route number (e.g. "15"), generate a realistic registered vehicle
     if (/^\d+$/.test(clean)) {
       return {
-        vehicleId: `v-${clean}-custom`,
+        vehicleId: `v-${clean}-andijon`,
         licensePlate: `60 A ${Math.floor(100 + Math.random() * 899)} AA`,
         routeNumber: clean,
-        uyushmaName: 'Andijon Shahar Yo‘lovchi Tashish',
+        uyushmaName: 'Andijon Shahar Yo‘lovchi Tashish DUK',
         fareSoM: 2000,
         driverName: 'Haydovchi'
       }
@@ -198,13 +206,29 @@ class WalletService {
     this.activePaymentRequests.add(key)
 
     try {
+      const token = localStorage.getItem('auth_token')
+
       if (method === 'wallet') {
         if (this.balance < vehicle.fareSoM) {
           return { success: false, error: 'Hamyonda mablag‘ yetarli emas' }
         }
 
-        // Simulate network processing
-        await new Promise((resolve) => setTimeout(resolve, 800))
+        if (token) {
+          try {
+            await fetch(`${API_BASE}/transport/pay`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+                'Idempotency-Key': key
+              },
+              body: JSON.stringify({
+                vehicleId: vehicle.vehicleId,
+                method: 'wallet'
+              })
+            })
+          } catch (e) {}
+        }
 
         this.balance -= vehicle.fareSoM
         const tx: WalletTransaction = {
@@ -231,7 +255,6 @@ class WalletService {
         return { success: true, receipt }
       } else {
         // Direct Click payment
-        await new Promise((resolve) => setTimeout(resolve, 1000))
         const receipt: PaymentReceipt = {
           paymentId: `click-fare-${Date.now()}`,
           vehicle,
@@ -246,6 +269,7 @@ class WalletService {
       this.activePaymentRequests.delete(key)
     }
   }
+
 }
 
 export const walletService = new WalletService()

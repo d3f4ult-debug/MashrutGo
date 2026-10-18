@@ -19,320 +19,12 @@ let devVehicles: UyushmaVehicle[] = [];
 let devParkings: UyushmaParking[] = [];
 let devFares: UyushmaFareRule[] = [];
 
-function initDevData(uyushmaId: string) {
-  if (devRoutes.length > 0) return;
-
-  devRoutes = [
-    {
-      id: 'rt-101',
-      uyushma_id: uyushmaId,
-      route_number: '12',
-      route_name: "O'sh ko'chasi — Yangi Bozor",
-      description: "Markaziy bozor va talabalar shaharchasi orqali asosiy magistral",
-      is_active: true,
-      assigned_vehicles_count: 3,
-      assigned_drivers_count: 3,
-      created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
-      directions: [
-        {
-          id: 'dir-101-out',
-          direction: 'outbound',
-          start_name: "O'sh ko'chasi (A)",
-          end_name: "Yangi Bozor (B)",
-          stops_count: 14,
-          distance_km: 11.2,
-          estimated_duration_min: 28,
-          is_active: true,
-        },
-        {
-          id: 'dir-101-in',
-          direction: 'inbound',
-          start_name: "Yangi Bozor (B)",
-          end_name: "O'sh ko'chasi (A)",
-          stops_count: 15,
-          distance_km: 11.5,
-          estimated_duration_min: 30,
-          is_active: true,
-        },
-      ],
-    },
-    {
-      id: 'rt-102',
-      uyushma_id: uyushmaId,
-      route_number: '1',
-      route_name: "Temiryo'l vokzali — Aeroport",
-      description: "Shahar vokzali va xalqaro aeroportni bog'lovchi yo'nalish",
-      is_active: true,
-      assigned_vehicles_count: 2,
-      assigned_drivers_count: 2,
-      created_at: new Date(Date.now() - 25 * 86400000).toISOString(),
-      directions: [
-        {
-          id: 'dir-102-out',
-          direction: 'outbound',
-          start_name: "Temiryo'l vokzali",
-          end_name: "Aeroport",
-          stops_count: 12,
-          distance_km: 9.8,
-          estimated_duration_min: 22,
-          is_active: true,
-        },
-        {
-          id: 'dir-102-in',
-          direction: 'inbound',
-          start_name: "Aeroport",
-          end_name: "Temiryo'l vokzali",
-          stops_count: 12,
-          distance_km: 9.8,
-          estimated_duration_min: 22,
-          is_active: true,
-        },
-      ],
-    },
-    {
-      id: 'rt-103',
-      uyushma_id: uyushmaId,
-      route_number: '24',
-      route_name: "Eski shahar — Bog'i Bobur",
-      description: "Madaniy markaz va istirohat bog'i yo'nalishi",
-      is_active: true,
-      assigned_vehicles_count: 1,
-      assigned_drivers_count: 1,
-      created_at: new Date(Date.now() - 15 * 86400000).toISOString(),
-      directions: [
-        {
-          id: 'dir-103-out',
-          direction: 'outbound',
-          start_name: "Eski shahar",
-          end_name: "Bog'i Bobur",
-          stops_count: 18,
-          distance_km: 14.0,
-          estimated_duration_min: 35,
-          is_active: true,
-        },
-        {
-          id: 'dir-103-in',
-          direction: 'inbound',
-          start_name: "Bog'i Bobur",
-          end_name: "Eski shahar",
-          stops_count: 18,
-          distance_km: 14.2,
-          estimated_duration_min: 36,
-          is_active: true,
-        },
-      ],
-    },
-  ];
-
-  devVehicles = [
-    {
-      id: 'veh-101',
-      uyushma_id: uyushmaId,
-      license_plate: '60 A 777 AA',
-      model: 'Isuzu NP37',
-      color: 'Oq',
-      type: 'isuzu',
-      is_active: true,
-      assigned_route_id: 'rt-101',
-      assigned_route_number: '12',
-      assigned_driver_id: 'usr-driver-1',
-      assigned_driver_name: 'Anvar Qodirov',
-      is_on_shift: true,
-      created_at: new Date(Date.now() - 20 * 86400000).toISOString(),
-    },
-    {
-      id: 'veh-102',
-      uyushma_id: uyushmaId,
-      license_plate: '60 B 123 BB',
-      model: 'Isuzu HC40',
-      color: 'Ko\'k',
-      type: 'isuzu',
-      is_active: true,
-      assigned_route_id: 'rt-101',
-      assigned_route_number: '12',
-      assigned_driver_id: 'usr-driver-2',
-      assigned_driver_name: 'Jasur Saidov',
-      is_on_shift: true,
-      created_at: new Date(Date.now() - 18 * 86400000).toISOString(),
-    },
-    {
-      id: 'veh-103',
-      uyushma_id: uyushmaId,
-      license_plate: '60 C 456 CC',
-      model: 'Damas DLX',
-      color: 'Kumush',
-      type: 'damas',
-      is_active: true,
-      assigned_route_id: 'rt-102',
-      assigned_route_number: '1',
-      assigned_driver_id: 'usr-driver-3',
-      assigned_driver_name: 'Olimjon Rustamov',
-      is_on_shift: false,
-      created_at: new Date(Date.now() - 10 * 86400000).toISOString(),
-    },
-    {
-      id: 'veh-104',
-      uyushma_id: uyushmaId,
-      license_plate: '60 D 999 DD',
-      model: 'Yutong ZK',
-      color: 'Yashil',
-      type: 'bus',
-      is_active: true,
-      assigned_route_id: 'rt-103',
-      assigned_route_number: '24',
-      assigned_driver_id: 'usr-driver-4',
-      assigned_driver_name: 'Bobur Xolmatov',
-      is_on_shift: true,
-      created_at: new Date(Date.now() - 8 * 86400000).toISOString(),
-    },
-  ];
-
-  devDrivers = [
-    {
-      id: 'usr-driver-1',
-      uyushma_id: uyushmaId,
-      full_name: 'Anvar Qodirov',
-      phone: '+998 90 123 45 67',
-      email: 'driver@mashrutgo.uz',
-      is_active: true,
-      assigned_vehicle_id: 'veh-101',
-      assigned_vehicle_plate: '60 A 777 AA (Isuzu NP37)',
-      assigned_route_id: 'rt-101',
-      assigned_route_number: '12',
-      active_shift: {
-        id: 'shf-1',
-        started_at: new Date(Date.now() - 3 * 3600000).toISOString(),
-        is_online: true,
-      },
-      created_at: new Date(Date.now() - 25 * 86400000).toISOString(),
-    },
-    {
-      id: 'usr-driver-2',
-      uyushma_id: uyushmaId,
-      full_name: 'Jasur Saidov',
-      phone: '+998 91 234 56 78',
-      email: 'jasur@mashrutgo.uz',
-      is_active: true,
-      assigned_vehicle_id: 'veh-102',
-      assigned_vehicle_plate: '60 B 123 BB (Isuzu HC40)',
-      assigned_route_id: 'rt-101',
-      assigned_route_number: '12',
-      active_shift: {
-        id: 'shf-2',
-        started_at: new Date(Date.now() - 2 * 3600000).toISOString(),
-        is_online: true,
-      },
-      created_at: new Date(Date.now() - 20 * 86400000).toISOString(),
-    },
-    {
-      id: 'usr-driver-3',
-      uyushma_id: uyushmaId,
-      full_name: 'Olimjon Rustamov',
-      phone: '+998 93 345 67 89',
-      email: 'olim@mashrutgo.uz',
-      is_active: true,
-      assigned_vehicle_id: 'veh-103',
-      assigned_vehicle_plate: '60 C 456 CC (Damas DLX)',
-      assigned_route_id: 'rt-102',
-      assigned_route_number: '1',
-      active_shift: null,
-      created_at: new Date(Date.now() - 15 * 86400000).toISOString(),
-    },
-    {
-      id: 'usr-driver-4',
-      uyushma_id: uyushmaId,
-      full_name: 'Bobur Xolmatov',
-      phone: '+998 94 456 78 90',
-      email: 'bobur@mashrutgo.uz',
-      is_active: true,
-      assigned_vehicle_id: 'veh-104',
-      assigned_vehicle_plate: '60 D 999 DD (Yutong ZK)',
-      assigned_route_id: 'rt-103',
-      assigned_route_number: '24',
-      active_shift: {
-        id: 'shf-4',
-        started_at: new Date(Date.now() - 1 * 3600000).toISOString(),
-        is_online: true,
-      },
-      created_at: new Date(Date.now() - 10 * 86400000).toISOString(),
-    },
-  ];
-
-  devParkings = [
-    {
-      id: 'prk-01',
-      uyushma_id: uyushmaId,
-      name: "O'sh ko'chasi bosh stoyankasi",
-      lat: 40.785,
-      lng: 72.348,
-      radius_m: 120,
-      capacity: 15,
-      current_vehicle_count: 4,
-      is_active: true,
-      created_at: new Date(Date.now() - 20 * 86400000).toISOString(),
-    },
-    {
-      id: 'prk-02',
-      uyushma_id: uyushmaId,
-      name: "Yangi Bozor oxirgi bekati",
-      lat: 40.756,
-      lng: 72.361,
-      radius_m: 150,
-      capacity: 25,
-      current_vehicle_count: 7,
-      is_active: true,
-      created_at: new Date(Date.now() - 18 * 86400000).toISOString(),
-    },
-    {
-      id: 'prk-03',
-      uyushma_id: uyushmaId,
-      name: "Temiryo'l vokzali avtoturargohi",
-      lat: 40.789,
-      lng: 72.335,
-      radius_m: 100,
-      capacity: 12,
-      current_vehicle_count: 3,
-      is_active: true,
-      created_at: new Date(Date.now() - 15 * 86400000).toISOString(),
-    },
-  ];
-
-  devFares = [
-    {
-      id: 'fare-01',
-      uyushma_id: uyushmaId,
-      name: 'Standart shahar tarifi',
-      rule_type: 'fixed',
-      amount: 3000,
-      target_route_id: undefined, // All routes
-      is_active: true,
-      description: "Barcha yo'nalishlar uchun belgilangan asosiy qatnov haqi",
-      created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
-    },
-    {
-      id: 'fare-02',
-      uyushma_id: uyushmaId,
-      name: 'Talaba va imtiyozli tarif',
-      rule_type: 'fixed',
-      amount: 2000,
-      target_route_id: 'rt-101',
-      target_route_number: '12',
-      is_active: true,
-      description: "Talabalar shaharchasi bo'ylab imtiyozli qatnov",
-      created_at: new Date(Date.now() - 20 * 86400000).toISOString(),
-    },
-    {
-      id: 'fare-03',
-      uyushma_id: uyushmaId,
-      name: 'Kechki qatnov tarifi (20:00 dan so\'ng)',
-      rule_type: 'fixed',
-      amount: 4000,
-      target_route_id: undefined,
-      is_active: true,
-      description: "Soat 20:00 dan keyingi tungi reyslar uchun",
-      created_at: new Date(Date.now() - 10 * 86400000).toISOString(),
-    },
-  ];
+function initDevData(_uyushmaId: string) {
+  devRoutes = [];
+  devDrivers = [];
+  devVehicles = [];
+  devParkings = [];
+  devFares = [];
 }
 
 export const uyushmaApi = {
@@ -352,10 +44,10 @@ export const uyushmaApi = {
           active_shifts_count: activeShifts,
           visible_vehicles_count: visibleVehicles,
           parkings_count: devParkings.length,
-          today_payments_total: 1845000,
-          today_payments_count: 615,
-          pending_cashouts_count: 3,
-          pending_cashouts_total: 420000,
+          today_payments_total: 0,
+          today_payments_count: 0,
+          pending_cashouts_count: 0,
+          pending_cashouts_total: 0,
         };
       }
       throw err;
@@ -583,6 +275,21 @@ export const uyushmaApi = {
         if (idx !== -1) {
           devDrivers[idx] = { ...devDrivers[idx], ...updates };
           return devDrivers[idx];
+        }
+      }
+      throw err;
+    }
+  },
+
+  async verifyDriver(uyushmaId: string, driverId: string): Promise<any> {
+    try {
+      return await apiClient.put(`/uyushma/${uyushmaId}/drivers/${driverId}/verify`, {});
+    } catch (err) {
+      if (isDev) {
+        const d = devDrivers.find(item => item.id === driverId);
+        if (d) {
+          d.is_active = true;
+          return d;
         }
       }
       throw err;

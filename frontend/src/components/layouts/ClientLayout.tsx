@@ -62,21 +62,6 @@ export default function ClientLayout() {
             <Link to="/wallet" className={`hover:text-blue-600 transition-colors ${location.pathname === '/wallet' ? 'text-blue-600 font-bold' : ''}`}>
               {uz.nav.wallet}
             </Link>
-
-            <div className="h-4 w-px bg-neutral-200" />
-
-            {/* Portal links for quick role switching & testing */}
-            <div className="flex items-center gap-1.5 text-xs">
-              <Link to="/driver" className="px-2 py-1 rounded bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 transition-colors">
-                Haydovchi
-              </Link>
-              <Link to="/uyushma" className="px-2 py-1 rounded bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 transition-colors">
-                Uyushma
-              </Link>
-              <Link to="/admin" className="px-2 py-1 rounded bg-neutral-100 hover:bg-blue-50 hover:text-blue-700 transition-colors">
-                Admin
-              </Link>
-            </div>
           </nav>
 
           <div className="flex items-center gap-3">

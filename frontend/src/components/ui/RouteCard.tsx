@@ -149,22 +149,13 @@ export default function RouteCard({
           </span>
         </div>
 
-        {/* Live availability indicator */}
-        {liveCount !== undefined && (
-          <div>
-            {liveCount > 0 ? (
-              <span className="inline-flex items-center font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
-                {uz.alternatives.liveVehiclesOnline(liveCount)}
-              </span>
-            ) : (
-              <span className="inline-flex items-center text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-full">
-                <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 mr-1.5"></span>
-                {uz.alternatives.noLiveVehicles}
-              </span>
-            )}
-          </div>
-        )}
+        {/* Live availability indicator / Upcoming feature badge */}
+        <div>
+          <span className="inline-flex items-center text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-full">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1.5 animate-pulse"></span>
+            Jonli GPS — Tez kunda
+          </span>
+        </div>
       </div>
     </div>
   )

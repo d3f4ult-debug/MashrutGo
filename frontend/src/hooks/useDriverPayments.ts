@@ -84,10 +84,10 @@ export function useDriverPayments() {
         paymentApi.getLedger(vehicleIdRef.current),
         paymentApi.getCashouts(vehicleIdRef.current),
       ]);
-      setPayments(pmts);
-      setBalance(bal);
-      setLedger(led);
-      setCashouts(csh);
+      setPayments(Array.isArray(pmts) ? pmts : []);
+      setBalance(bal || null);
+      setLedger(Array.isArray(led) ? led : []);
+      setCashouts(Array.isArray(csh) ? csh : []);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Ma\'lumotlarni yuklashda xatolik yuz berdi.';
       setError(msg);

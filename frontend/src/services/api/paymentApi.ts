@@ -16,199 +16,61 @@ let devLedger: LedgerEntry[] = [];
 let devCashouts: CashoutRequest[] = [];
 let devBalance: DriverBalanceSummary | null = null;
 
+function getStoredCashouts(): CashoutRequest[] {
+  try {
+    const raw = localStorage.getItem('mashrutgo_dev_cashouts');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((c: any) => ({
+          id: String(c.id),
+          driver_id: String(c.driver_id || 'usr-driver-1'),
+          vehicle_id: String(c.vehicle_id || 'veh-101'),
+          amount: Number(c.amount ?? c.amount_uzs ?? 0),
+          method: c.method || 'card',
+          payout_details: c.payout_details || c.notes || 'Karta / Bank hisobi',
+          status: c.status || 'pending',
+          created_at: c.created_at || new Date().toISOString(),
+          processed_at: c.processed_at,
+          rejection_reason: c.rejection_reason,
+        }));
+      }
+    }
+  } catch {}
+  return [];
+}
+
+function saveStoredCashouts(list: any[]) {
+  try {
+    localStorage.setItem('mashrutgo_dev_cashouts', JSON.stringify(list));
+  } catch {}
+}
+
 function initDevData(vehicleId: string) {
   if (devPayments.length > 0) return;
 
-  const now = Date.now();
-  const minutesAgo = (m: number) => new Date(now - m * 60 * 1000).toISOString();
-  const hoursAgo = (h: number) => new Date(now - h * 3600 * 1000).toISOString();
-
-  devPayments = [
-    {
-      id: 'pay-001',
-      reference_id: 'CLK-904821',
-      vehicle_id: vehicleId,
-      driver_id: 'usr-driver-1',
-      route_id: 'rt-101',
-      amount: 3000,
-      fare_name: "Shahar ichi tarifi",
-      status: 'completed',
-      method: 'click',
-      created_at: minutesAgo(4),
-      refundable: true,
-      refund_window_minutes: 30,
-      passenger_identifier: 'Mijoz #4829',
-    },
-    {
-      id: 'pay-002',
-      reference_id: 'PAY-312984',
-      vehicle_id: vehicleId,
-      driver_id: 'usr-driver-1',
-      route_id: 'rt-101',
-      amount: 3000,
-      fare_name: "Shahar ichi tarifi",
-      status: 'completed',
-      method: 'payme',
-      created_at: minutesAgo(12),
-      refundable: true,
-      refund_window_minutes: 30,
-      passenger_identifier: 'Mijoz #7124',
-    },
-    {
-      id: 'pay-003',
-      reference_id: 'NFC-618402',
-      vehicle_id: vehicleId,
-      driver_id: 'usr-driver-1',
-      route_id: 'rt-101',
-      amount: 3000,
-      fare_name: "Humo / Uzcard NFC",
-      status: 'completed',
-      method: 'nfc',
-      created_at: minutesAgo(26),
-      refundable: true,
-      refund_window_minutes: 30,
-      passenger_identifier: 'Karta *** 8201',
-    },
-    {
-      id: 'pay-004',
-      reference_id: 'WLT-551029',
-      vehicle_id: vehicleId,
-      driver_id: 'usr-driver-1',
-      route_id: 'rt-101',
-      amount: 3000,
-      fare_name: "MashrutGo Hamyon",
-      status: 'completed',
-      method: 'wallet',
-      created_at: hoursAgo(1.5),
-      refundable: false, // Window expired (> 30 min)
-      refund_window_minutes: 30,
-      passenger_identifier: 'Hamyon #9182',
-    },
-    {
-      id: 'pay-005',
-      reference_id: 'CLK-881203',
-      vehicle_id: vehicleId,
-      driver_id: 'usr-driver-1',
-      route_id: 'rt-101',
-      amount: 3000,
-      fare_name: "Shahar ichi tarifi",
-      status: 'refunded',
-      method: 'click',
-      created_at: hoursAgo(2.1),
-      refundable: false,
-      refund_window_minutes: 30,
-      refund_reason: "Mijoz adashib to'ladi",
-      refunded_at: hoursAgo(2.0),
-      passenger_identifier: 'Mijoz #1042',
-    },
-    {
-      id: 'pay-006',
-      reference_id: 'PAY-229410',
-      vehicle_id: vehicleId,
-      driver_id: 'usr-driver-1',
-      route_id: 'rt-101',
-      amount: 3000,
-      fare_name: "Shahar ichi tarifi",
-      status: 'completed',
-      method: 'payme',
-      created_at: hoursAgo(3.2),
-      refundable: false,
-      refund_window_minutes: 30,
-      passenger_identifier: 'Mijoz #3381',
-    },
-  ];
+  devPayments = [];
 
   devBalance = {
     vehicle_id: vehicleId,
-    available_balance: 145000,
-    today_earnings: 15000,
-    today_gross: 18000,
-    total_refunded_today: 3000,
-    rides_count_today: 6,
-    shift_earnings: 15000,
-    pending_cashout: 50000,
+    available_balance: 0,
+    today_earnings: 0,
+    today_gross: 0,
+    total_refunded_today: 0,
+    rides_count_today: 0,
+    shift_earnings: 0,
+    pending_cashout: 0,
   };
 
-  devLedger = [
-    {
-      id: 'led-001',
-      entry_type: 'ride_payment',
-      amount: 3000,
-      balance_after: 145000,
-      reference_id: 'CLK-904821',
-      description: "Yo'l haqi to'lovi (Click)",
-      created_at: minutesAgo(4),
-    },
-    {
-      id: 'led-002',
-      entry_type: 'ride_payment',
-      amount: 3000,
-      balance_after: 142000,
-      reference_id: 'PAY-312984',
-      description: "Yo'l haqi to'lovi (Payme)",
-      created_at: minutesAgo(12),
-    },
-    {
-      id: 'led-003',
-      entry_type: 'ride_payment',
-      amount: 3000,
-      balance_after: 139000,
-      reference_id: 'NFC-618402',
-      description: "Yo'l haqi to'lovi (NFC)",
-      created_at: minutesAgo(26),
-    },
-    {
-      id: 'led-004',
-      entry_type: 'refund',
-      amount: -3000,
-      balance_after: 136000,
-      reference_id: 'CLK-881203',
-      description: "To'lovni bekor qilish (Adashib to'langan)",
-      created_at: hoursAgo(2.0),
-    },
-    {
-      id: 'led-005',
-      entry_type: 'cashout',
-      amount: -50000,
-      balance_after: 139000,
-      reference_id: 'CSH-00192',
-      description: "Karta hisobiga pul chiqarish (8600 •••• 4123)",
-      created_at: hoursAgo(4),
-    },
-    {
-      id: 'led-006',
-      entry_type: 'commission',
-      amount: -1500,
-      balance_after: 189000,
-      reference_id: 'COM-2026-09',
-      description: "Uyushma xizmat haqi komissiyasi (1%)",
-      created_at: hoursAgo(5),
-    },
-  ];
+  devLedger = [];
 
-  devCashouts = [
-    {
-      id: 'csh-001',
-      driver_id: 'usr-driver-1',
-      vehicle_id: vehicleId,
-      amount: 50000,
-      method: 'card',
-      payout_details: '8600 •••• 4123 (Uzcard)',
-      status: 'pending',
-      created_at: hoursAgo(4),
-    },
-    {
-      id: 'csh-002',
-      driver_id: 'usr-driver-1',
-      vehicle_id: vehicleId,
-      amount: 120000,
-      method: 'card',
-      payout_details: '9860 •••• 9812 (Humo)',
-      status: 'paid',
-      created_at: new Date(now - 28 * 3600 * 1000).toISOString(),
-      processed_at: new Date(now - 26 * 3600 * 1000).toISOString(),
-    },
-  ];
+  const stored = getStoredCashouts();
+  if (stored.length > 0) {
+    devCashouts = stored;
+  } else {
+    devCashouts = [];
+    saveStoredCashouts(devCashouts);
+  }
 }
 
 export const paymentApi = {
@@ -221,17 +83,48 @@ export const paymentApi = {
       q.append('vehicle_id', vehicleId);
       if (filter?.period) q.append('period', filter.period);
       if (filter?.status) q.append('status', filter.status);
-      return await apiClient.get<DriverPayment[]>(`/driver/payments?${q.toString()}`);
-    } catch (err) {
+      const res = await apiClient.get<any>(`/driver/payments?${q.toString()}`);
+
+      const rawList = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
+      if (rawList.length > 0) {
+        return rawList.map((p: any) => ({
+          id: String(p.id),
+          reference_id: p.reference_id || p.external_trans_id || p.idempotency_key || `CLK-${p.id}`,
+          vehicle_id: String(p.vehicle_id || p.vehicle_internal_id || vehicleId),
+          driver_id: String(p.driver_id || 'usr-driver-1'),
+          route_id: String(p.route_id || 'rt-101'),
+          amount: Number(p.amount ?? p.amount_uzs ?? 0),
+          fare_name: p.fare_name || (p.route_number ? `Marshrut #${p.route_number}` : "Shahar ichi tarifi"),
+          status: (p.status as PaymentStatus) || 'completed',
+          method: (p.method || p.payment_method || 'click') as PaymentMethod,
+          created_at: p.created_at || new Date().toISOString(),
+          refundable: Boolean(p.refundable ?? (p.status === 'completed')),
+          refund_window_minutes: p.refund_window_minutes || 30,
+          refund_reason: p.refund_reason,
+          refunded_at: p.refunded_at,
+          passenger_identifier: p.passenger_identifier || (p.client_user_id ? `Mijoz #${p.client_user_id}` : 'Mijoz'),
+        }));
+      }
+
       if (isDev) {
         initDevData(vehicleId);
-        let list = devPayments.filter(p => p.vehicle_id === vehicleId);
+        let list = devPayments.filter(p => p.vehicle_id === vehicleId || !p.vehicle_id);
         if (filter?.status && filter.status !== 'all') {
           list = list.filter(p => p.status === filter.status);
         }
         return list;
       }
-      throw err;
+      return [];
+    } catch (err) {
+      if (isDev) {
+        initDevData(vehicleId);
+        let list = devPayments.filter(p => p.vehicle_id === vehicleId || !p.vehicle_id);
+        if (filter?.status && filter.status !== 'all') {
+          list = list.filter(p => p.status === filter.status);
+        }
+        return list;
+      }
+      return [];
     }
   },
 
@@ -315,13 +208,48 @@ export const paymentApi = {
    */
   async getBalance(vehicleId: string): Promise<DriverBalanceSummary> {
     try {
-      return await apiClient.get<DriverBalanceSummary>(`/driver/balance?vehicle_id=${vehicleId}`);
-    } catch (err) {
+      const res = await apiClient.get<any>(`/driver/balance?vehicle_id=${vehicleId}`);
+      if (res && (res.available_balance !== undefined || res.balance_uzs !== undefined)) {
+        return {
+          vehicle_id: res.vehicle_id || vehicleId,
+          available_balance: Number(res.available_balance ?? res.balance_uzs ?? 0),
+          today_earnings: Number(res.today_earnings ?? 0),
+          today_gross: Number(res.today_gross ?? 0),
+          total_refunded_today: Number(res.total_refunded_today ?? 0),
+          rides_count_today: Number(res.rides_count_today ?? 0),
+          shift_earnings: Number(res.shift_earnings ?? 0),
+          pending_cashout: Number(res.pending_cashout ?? 0),
+        };
+      }
       if (isDev) {
         initDevData(vehicleId);
         return devBalance!;
       }
-      throw err;
+      return {
+        vehicle_id: vehicleId,
+        available_balance: 0,
+        today_earnings: 0,
+        today_gross: 0,
+        total_refunded_today: 0,
+        rides_count_today: 0,
+        shift_earnings: 0,
+        pending_cashout: 0,
+      };
+    } catch {
+      if (isDev) {
+        initDevData(vehicleId);
+        return devBalance!;
+      }
+      return {
+        vehicle_id: vehicleId,
+        available_balance: 0,
+        today_earnings: 0,
+        today_gross: 0,
+        total_refunded_today: 0,
+        rides_count_today: 0,
+        shift_earnings: 0,
+        pending_cashout: 0,
+      };
     }
   },
 
@@ -330,13 +258,30 @@ export const paymentApi = {
    */
   async getLedger(vehicleId: string): Promise<LedgerEntry[]> {
     try {
-      return await apiClient.get<LedgerEntry[]>(`/driver/ledger?vehicle_id=${vehicleId}`);
-    } catch (err) {
+      const res = await apiClient.get<any>(`/driver/ledger?vehicle_id=${vehicleId}`);
+      const rawList = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
+      if (rawList.length > 0) {
+        return rawList.map((l: any) => ({
+          id: String(l.id),
+          entry_type: l.entry_type || 'ride_payment',
+          amount: Number(l.amount ?? l.amount_uzs ?? 0),
+          balance_after: Number(l.balance_after ?? l.balance_after_uzs ?? 0),
+          reference_id: l.reference_id || `REF-${l.id}`,
+          description: l.description || "Yo'l haqi to'lovi",
+          created_at: l.created_at || new Date().toISOString(),
+        }));
+      }
       if (isDev) {
         initDevData(vehicleId);
         return [...devLedger];
       }
-      throw err;
+      return [];
+    } catch {
+      if (isDev) {
+        initDevData(vehicleId);
+        return [...devLedger];
+      }
+      return [];
     }
   },
 
@@ -381,6 +326,7 @@ export const paymentApi = {
         };
 
         devCashouts.unshift(newReq);
+        saveStoredCashouts(devCashouts);
 
         if (devBalance) {
           devBalance.available_balance -= amount;
@@ -408,10 +354,29 @@ export const paymentApi = {
    */
   async getCashouts(vehicleId: string): Promise<CashoutRequest[]> {
     try {
-      return await apiClient.get<CashoutRequest[]>(`/driver/cashouts?vehicle_id=${vehicleId}`);
+      const raw = await apiClient.get<any[]>(`/driver/cashouts?vehicle_id=${vehicleId}`);
+      if (Array.isArray(raw)) {
+        return raw.map(r => ({
+          id: String(r.id),
+          driver_id: String(r.driver_id || 'usr-driver-1'),
+          vehicle_id: String(r.vehicle_id || vehicleId),
+          amount: Number(r.amount ?? r.amount_uzs ?? 0),
+          method: (r.method as any) || 'card',
+          payout_details: r.payout_details || r.notes || "Karta / Bank hisob raqami",
+          status: (r.status as any) || 'pending',
+          created_at: r.created_at || new Date().toISOString(),
+          processed_at: r.processed_at,
+          rejection_reason: r.rejection_reason,
+        }));
+      }
+      return [];
     } catch (err) {
       if (isDev) {
         initDevData(vehicleId);
+        const stored = getStoredCashouts();
+        if (stored.length > 0) {
+          return stored;
+        }
         return [...devCashouts];
       }
       throw err;

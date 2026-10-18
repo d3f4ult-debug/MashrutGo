@@ -13,6 +13,7 @@ from app.api.deps import (
 from app.core.roles import UserRole
 from app.models.finance import Payment, Refund, WalletTransaction
 from app.models.user import User, DriverProfile
+from app.models.uyushma import Uyushma
 from app.schemas.admin import (
     DashboardSummaryResponse,
     VehicleCreateRequest,
@@ -63,6 +64,44 @@ def get_dashboard_metrics(
     - Financial totals: payments, refunds, ledger volume, pending cashouts.
     """
     return admin_service.get_dashboard_summary(current_user=current_user, db=db)
+
+
+@router.get("/kpis", response_model=DashboardSummaryResponse)
+def get_kpis_metrics(
+    current_user: User = Depends(require_uyushma_admin),
+    db: Session = Depends(get_db_dep),
+):
+    """Alias for dashboard metrics used by admin panel."""
+    return admin_service.get_dashboard_summary(current_user=current_user, db=db)
+
+
+@router.get("/uyushmalar")
+def list_admin_uyushmalar(
+    current_user: User = Depends(require_super_admin),
+    db: Session = Depends(get_db_dep),
+):
+    """Super Admin gets list of registered Uyushma organizations."""
+    uyushmas = db.query(Uyushma).all()
+    res = []
+    for u in uyushmas:
+        routes_count = len(u.routes) if u.routes else 0
+        drivers_count = len(u.drivers) if u.drivers else 0
+        vehicles_count = len(u.vehicles) if u.vehicles else 0
+        res.append({
+            "id": str(u.id),
+            "name": u.name,
+            "region": u.address or "Andijon viloyati",
+            "contact_person": "Boshqaruvchi",
+            "contact_phone": u.phone or "",
+            "admin_email": f"{u.code}@mashrutgo.uz",
+            "license_number": f"LNZ-{u.code}-2024",
+            "routes_count": routes_count,
+            "drivers_count": drivers_count,
+            "vehicles_count": vehicles_count,
+            "status": "active" if u.is_active else "archived",
+            "created_at": u.created_at.isoformat() if u.created_at else datetime.utcnow().isoformat(),
+        })
+    return res
 
 
 # --- 2. Vehicles CRUD & Filter ---

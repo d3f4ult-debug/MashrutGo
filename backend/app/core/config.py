@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-key-please-change-to-a-random-32-byte-hex-in-production"
     access_token_expire_minutes: int = 1440
     algorithm: str = "HS256"
+    devsms_api_key: str = "185c8a1dff0cf6b047a6526ba07bb32d6d34f4a606feddd21a713e9a85673a85"
     cors_origins: Union[List[str], str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

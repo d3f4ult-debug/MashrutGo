@@ -29,15 +29,22 @@ export function RoleGuard({ allowedRoles, children }: RoleGuardProps) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (!allowedRoles.includes(user.role)) {
+  const isSuperOrAdmin = user.role === 'super_admin' || user.role === 'admin';
+  const hasAllowedRole = isSuperOrAdmin || allowedRoles.includes(user.role);
+
+  if (!hasAllowedRole) {
     // Redirect to the user's own home based on role
-    const roleHome: Record<UserRole, string> = {
+    const roleHome: Record<string, string> = {
       driver: '/driver',
       uyushma: '/uyushma',
+      uyushma_admin: '/uyushma',
       admin: '/admin',
+      super_admin: '/admin',
+      client: '/',
     };
-    return <Navigate to={roleHome[user.role]} replace />;
+    return <Navigate to={roleHome[user.role] || '/'} replace />;
   }
 
   return <>{children}</>;
+
 }

@@ -48,6 +48,9 @@ const AppMap = forwardRef<AppMapHandle | null, Props & { onMapReady?: (map: any)
       []
     )
 
+    const onMapReadyRef = useRef(onMapReady)
+    onMapReadyRef.current = onMapReady
+
     useEffect(() => {
       const el = containerRef.current
       if (!el || !hasKey) return
@@ -55,7 +58,7 @@ const AppMap = forwardRef<AppMapHandle | null, Props & { onMapReady?: (map: any)
       try {
         const map = initMap(el, { center, zoom })
         mapRef.current = map
-        if (onMapReady) onMapReady(map)
+        if (onMapReadyRef.current) onMapReadyRef.current(map)
       } catch (e) {
         console.warn('Map initialization fallback:', e)
       }
@@ -70,7 +73,7 @@ const AppMap = forwardRef<AppMapHandle | null, Props & { onMapReady?: (map: any)
           mapRef.current = null
         }
       }
-    }, [center, zoom, onMapReady, hasKey])
+    }, [hasKey])
 
     return (
       <div className={`w-full h-full relative overflow-hidden bg-neutral-100 ${className}`}>

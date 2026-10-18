@@ -7,7 +7,9 @@ class UserBase(BaseModel):
     phone: str = Field(..., examples=["+998901234567"])
     full_name: str = Field(..., examples=["Ali Valiyev"])
     role: str = "client"
+    uyushma_id: Optional[int] = None
     is_active: bool = True
+    is_verified: Optional[bool] = None
 
 
 class UserCreate(UserBase):

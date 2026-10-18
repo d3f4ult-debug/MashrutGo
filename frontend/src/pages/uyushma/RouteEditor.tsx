@@ -5,28 +5,44 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { useAuth } from '../../contexts/AuthContext';
 import { uyushmaApi } from '../../services/api/uyushmaApi';
 import { routeEditorApi } from '../../services/api/routeEditorApi';
-import type {
-  DirectionEditorState,
-  RouteDraft,
-  RouteWaypoint,
-} from '../../types/routeEditor';
+import { fetchRoadSegment } from '../../services/routing/roadRouting';
+import type { RouteDraft } from '../../types/routeEditor';
 import './RouteEditor.css';
 
 const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY || 'get_your_key_at_maptiler';
 const ANDIJON_CENTER: [number, number] = [72.344, 40.783];
 
-// Initial direction state helper
-function createEmptyDirection(dir: 'outbound' | 'inbound', startName = 'Bosh bekat (A)', endName = 'Oxirgi bekat (B)'): DirectionEditorState {
-  return {
-    direction: dir,
-    startPoint: { name: startName, coordinates: dir === 'outbound' ? [72.348, 40.785] : [72.361, 40.756] },
-    endPoint: { name: endName, coordinates: dir === 'outbound' ? [72.361, 40.756] : [72.348, 40.785] },
-    waypoints: [],
-    geometry: null,
-    distanceKm: 0,
-    durationMin: 0,
-    isDirty: false,
-  };
+// Helper: Haversine distance in km
+function calculateHaversineKm(coords: [number, number][]): number {
+  if (coords.length < 2) return 0;
+  let total = 0;
+  const R = 6371;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const c1 = coords[i];
+    const c2 = coords[i + 1];
+    const dLat = ((c2[1] - c1[1]) * Math.PI) / 180;
+    const dLng = ((c2[0] - c1[0]) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((c1[1] * Math.PI) / 180) *
+      Math.cos((c2[1] * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+    total += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  return parseFloat(total.toFixed(2));
+}
+
+// Distance threshold between points in meters (~12 meters) for freehand
+function isFarEnough(p1: [number, number], p2: [number, number], minMeters = 12): boolean {
+  const dLat = ((p2[1] - p1[1]) * Math.PI) / 180;
+  const dLng = ((p2[0] - p1[0]) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((p1[1] * Math.PI) / 180) *
+    Math.cos((p2[1] * Math.PI) / 180) *
+    Math.sin(dLng / 2) ** 2;
+  const distMeters = 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return distMeters >= minMeters;
 }
 
 export function RouteEditor() {
@@ -37,65 +53,48 @@ export function RouteEditor() {
 
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const markersRef = useRef<maplibregl.Marker[]>([]);
 
-  // Metadata
+  // Route metadata
   const [routeNumber, setRouteNumber] = useState('12');
   const [routeName, setRouteName] = useState("O'sh ko'chasi — Yangi Bozor");
   const [routeStatus, setRouteStatus] = useState<'draft' | 'published'>('draft');
 
-  // Active Direction Tab
+  // Direction tab
   const [activeDirection, setActiveDirection] = useState<'outbound' | 'inbound'>('outbound');
 
-  // Independent directions
-  const [outbound, setOutbound] = useState<DirectionEditorState>(() =>
-    createEmptyDirection('outbound', "O'sh ko'chasi (A)", "Yangi Bozor (B)")
-  );
-  const [inbound, setInbound] = useState<DirectionEditorState>(() =>
-    createEmptyDirection('inbound', "Yangi Bozor (B)", "O'sh ko'chasi (A)")
-  );
+  // Coordinates per direction (pure polylines)
+  const [outboundCoords, setOutboundCoords] = useState<[number, number][]>([]);
+  const [inboundCoords, setInboundCoords] = useState<[number, number][]>([]);
 
-  // Undo history stack
-  const [history, setHistory] = useState<{ outbound: DirectionEditorState; inbound: DirectionEditorState }[]>([]);
+  // Drawing tools: 'roads' (snaps to actual streets), 'freehand' (paint drag), 'pan' (drag map)
+  const [toolMode, setToolMode] = useState<'roads' | 'freehand' | 'pan'>('roads');
+  const toolModeRef = useRef<'roads' | 'freehand' | 'pan'>('roads');
+  toolModeRef.current = toolMode;
 
-  // Feedback notification
+  const [isRouting, setIsRouting] = useState(false);
+  const isDrawingRef = useRef(false);
+  const currentStrokeRef = useRef<[number, number][]>([]);
+
+  // Undo history per direction
+  const [outboundHistory, setOutboundHistory] = useState<[number, number][][]>([]);
+  const [inboundHistory, setInboundHistory] = useState<[number, number][][]>([]);
+
+  // Dirty state
+  const [isDirty, setIsDirty] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Current active direction object
-  const currentDirState = activeDirection === 'outbound' ? outbound : inbound;
-  const setCurrentDirState = activeDirection === 'outbound' ? setOutbound : setInbound;
+  // Active coordinates
+  const currentCoords = activeDirection === 'outbound' ? outboundCoords : inboundCoords;
+  const setCurrentCoords = activeDirection === 'outbound' ? setOutboundCoords : setInboundCoords;
 
-  // ── Push current state to undo history before making edits ──
-  const pushHistory = useCallback(() => {
-    setHistory(prev => [...prev.slice(-15), { outbound: { ...outbound }, inbound: { ...inbound } }]);
-  }, [outbound, inbound]);
+  const currentHistory = activeDirection === 'outbound' ? outboundHistory : inboundHistory;
+  const setCurrentHistory = activeDirection === 'outbound' ? setOutboundHistory : setInboundHistory;
 
-  // ── Recalculate auto-path through A -> Waypoints -> B ──
-  const recalculatePath = useCallback(async (state: DirectionEditorState): Promise<DirectionEditorState> => {
-    if (!state.startPoint || !state.endPoint) {
-      return { ...state, geometry: null, distanceKm: 0, durationMin: 0 };
-    }
+  // Stats
+  const distanceKm = calculateHaversineKm(currentCoords);
+  const durationMin = Math.max(1, Math.round((distanceKm / 22) * 60));
 
-    try {
-      const res = await routeEditorApi.calculatePath({
-        origin: state.startPoint.coordinates,
-        destination: state.endPoint.coordinates,
-        waypoints: state.waypoints.map(w => w.coordinates),
-      });
-
-      return {
-        ...state,
-        geometry: res.geometry,
-        distanceKm: res.distance_km,
-        durationMin: res.duration_min,
-        isDirty: true,
-      };
-    } catch {
-      return state;
-    }
-  }, []);
-
-  // ── Load initial route if editing existing route ──
+  // ── Load route data if editing ──
   useEffect(() => {
     if (!id) return;
     uyushmaApi.getRoutes(uyushmaId).then(allRoutes => {
@@ -103,40 +102,55 @@ export function RouteEditor() {
       if (target) {
         setRouteNumber(target.route_number);
         setRouteName(target.route_name);
-        const outDir = target.directions.find(d => d.direction === 'outbound');
-        const inDir = target.directions.find(d => d.direction === 'inbound');
+        setRouteStatus(target.is_active ? 'published' : 'draft');
 
-        if (outDir) {
-          const outState = createEmptyDirection('outbound', outDir.start_name, outDir.end_name);
-          recalculatePath(outState).then(setOutbound);
-        }
-        if (inDir) {
-          const inState = createEmptyDirection('inbound', inDir.start_name, inDir.end_name);
-          recalculatePath(inState).then(setInbound);
+        // Check local storage draft or existing backend geometry
+        const localDraft = localStorage.getItem(`route_draft_${id}`);
+        if (localDraft) {
+          try {
+            const parsed = JSON.parse(localDraft);
+            if (parsed.outbound?.geometry?.coordinates) {
+              setOutboundCoords(parsed.outbound.geometry.coordinates);
+            }
+            if (parsed.inbound?.geometry?.coordinates) {
+              setInboundCoords(parsed.inbound.geometry.coordinates);
+            }
+          } catch {
+            // Ignore parse errors
+          }
         }
       }
     });
-  }, [id, uyushmaId, recalculatePath]);
+  }, [id, uyushmaId]);
 
-  // ── Initialize MapLibre GL ──
+  // ── Push to undo history ──
+  const recordHistory = useCallback((coords: [number, number][]) => {
+    setCurrentHistory(prev => [...prev.slice(-25), [...coords]]);
+  }, [setCurrentHistory]);
+
+  // ── Initialize MapLibre ──
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
 
-    const styleUrl = `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${MAPTILER_KEY}`;
+    const styleUrl =
+      MAPTILER_KEY && MAPTILER_KEY !== 'get_your_key_at_maptiler'
+        ? `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${MAPTILER_KEY}`
+        : 'https://tiles.openfreemap.org/styles/liberty';
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
       style: styleUrl,
       center: ANDIJON_CENTER,
-      zoom: 12.5,
+      zoom: 13,
       pitch: 0,
+      dragRotate: false,
     });
 
-    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 
     map.on('load', () => {
-      // Add GeoJSON line source and layers for route preview
-      map.addSource('route-path-source', {
+      // 1. Line Source
+      map.addSource('paint-route-source', {
         type: 'geojson',
         data: {
           type: 'Feature',
@@ -148,41 +162,58 @@ export function RouteEditor() {
         },
       });
 
-      // Outer glow / casing
+      // 2. Glow layer
       map.addLayer({
-        id: 'route-path-glow',
+        id: 'paint-route-glow',
         type: 'line',
-        source: 'route-path-source',
+        source: 'paint-route-source',
         layout: {
           'line-cap': 'round',
           'line-join': 'round',
         },
         paint: {
           'line-color': '#3b82f6',
-          'line-width': 10,
-          'line-opacity': 0.35,
-          'line-blur': 3,
+          'line-width': 12,
+          'line-opacity': 0.45,
+          'line-blur': 4,
         },
       });
 
-      // Core crisp transit line
+      // 3. Crisp vibrant route line
       map.addLayer({
-        id: 'route-path-line',
+        id: 'paint-route-line',
         type: 'line',
-        source: 'route-path-source',
+        source: 'paint-route-source',
         layout: {
           'line-cap': 'round',
           'line-join': 'round',
         },
         paint: {
-          'line-color': '#60a5fa',
-          'line-width': 5,
+          'line-color': '#2563eb',
+          'line-width': 6,
         },
       });
 
-      // Initial route calculation
-      recalculatePath(outbound).then(res => {
-        setOutbound(res);
+      // 4. Start & End subtle indicators (No big pins/letters)
+      map.addSource('paint-endpoints-source', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: [],
+        },
+      });
+
+      // Endpoint circle layer
+      map.addLayer({
+        id: 'paint-endpoints-circle',
+        type: 'circle',
+        source: 'paint-endpoints-source',
+        paint: {
+          'circle-radius': 7,
+          'circle-color': ['get', 'color'],
+          'circle-stroke-width': 3,
+          'circle-stroke-color': '#ffffff',
+        },
       });
     });
 
@@ -194,228 +225,313 @@ export function RouteEditor() {
     };
   }, []);
 
-  // ── Update Map Layer geometry when currentDirState geometry changes ──
+  // ── Sync GeoJSON layers when currentCoords change ──
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
 
-    const src = map.getSource('route-path-source') as maplibregl.GeoJSONSource | undefined;
-    if (src) {
-      if (currentDirState.geometry) {
-        src.setData({
+    // Update Line Source
+    const lineSrc = map.getSource('paint-route-source') as maplibregl.GeoJSONSource | undefined;
+    if (lineSrc) {
+      lineSrc.setData({
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates: currentCoords,
+        },
+      });
+    }
+
+    // Update Endpoints Source (Green dot at start, Red dot at end)
+    const pointsSrc = map.getSource('paint-endpoints-source') as maplibregl.GeoJSONSource | undefined;
+    if (pointsSrc) {
+      const features: GeoJSON.Feature[] = [];
+      if (currentCoords.length > 0) {
+        features.push({
           type: 'Feature',
-          properties: {},
-          geometry: currentDirState.geometry,
-        });
-      } else {
-        src.setData({
-          type: 'Feature',
-          properties: {},
-          geometry: { type: 'LineString', coordinates: [] },
+          properties: { color: '#22c55e', type: 'start' },
+          geometry: { type: 'Point', coordinates: currentCoords[0] },
         });
       }
+      if (currentCoords.length > 1) {
+        features.push({
+          type: 'Feature',
+          properties: { color: '#ef4444', type: 'end' },
+          geometry: { type: 'Point', coordinates: currentCoords[currentCoords.length - 1] },
+        });
+      }
+      pointsSrc.setData({
+        type: 'FeatureCollection',
+        features,
+      });
     }
-  }, [currentDirState.geometry]);
+  }, [currentCoords]);
 
-  // ── Render and Synchronize HTML Markers on Map ──
+  // ── Toggle DragPan behavior based on tool mode ──
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // Remove existing markers
-    markersRef.current.forEach(m => m.remove());
-    markersRef.current = [];
-
-    // Helper to create styled pin element
-    const createPin = (label: string, className: string) => {
-      const el = document.createElement('div');
-      el.className = `map-marker-pin ${className}`;
-      el.innerText = label;
-      return el;
-    };
-
-    // Marker A (Origin)
-    if (currentDirState.startPoint) {
-      const elA = createPin('A', 'start');
-      const markerA = new maplibregl.Marker({ element: elA, draggable: true })
-        .setLngLat(currentDirState.startPoint.coordinates)
-        .addTo(map);
-
-      markerA.on('dragend', async () => {
-        const lngLat = markerA.getLngLat();
-        pushHistory();
-        const updatedState = {
-          ...currentDirState,
-          startPoint: { ...currentDirState.startPoint!, coordinates: [lngLat.lng, lngLat.lat] as [number, number] },
-        };
-        const calculated = await recalculatePath(updatedState);
-        setCurrentDirState(calculated);
-      });
-
-      markersRef.current.push(markerA);
+    if (toolMode === 'freehand') {
+      map.dragPan.disable();
+    } else {
+      map.dragPan.enable();
     }
+  }, [toolMode]);
 
-    // Intermediate Waypoint markers
-    currentDirState.waypoints.forEach((wp, idx) => {
-      const elWp = createPin(String(idx + 1), 'waypoint');
-      const markerWp = new maplibregl.Marker({ element: elWp, draggable: true })
-        .setLngLat(wp.coordinates)
-        .addTo(map);
-
-      markerWp.on('dragend', async () => {
-        const lngLat = markerWp.getLngLat();
-        pushHistory();
-        const newWaypoints = currentDirState.waypoints.map(w =>
-          w.id === wp.id ? { ...w, coordinates: [lngLat.lng, lngLat.lat] as [number, number] } : w
-        );
-        const updatedState = { ...currentDirState, waypoints: newWaypoints };
-        const calculated = await recalculatePath(updatedState);
-        setCurrentDirState(calculated);
-      });
-
-      markersRef.current.push(markerWp);
-    });
-
-    // Marker B (Destination)
-    if (currentDirState.endPoint) {
-      const elB = createPin('B', 'end');
-      const markerB = new maplibregl.Marker({ element: elB, draggable: true })
-        .setLngLat(currentDirState.endPoint.coordinates)
-        .addTo(map);
-
-      markerB.on('dragend', async () => {
-        const lngLat = markerB.getLngLat();
-        pushHistory();
-        const updatedState = {
-          ...currentDirState,
-          endPoint: { ...currentDirState.endPoint!, coordinates: [lngLat.lng, lngLat.lat] as [number, number] },
-        };
-        const calculated = await recalculatePath(updatedState);
-        setCurrentDirState(calculated);
-      });
-
-      markersRef.current.push(markerB);
-    }
-  }, [currentDirState, pushHistory, recalculatePath, setCurrentDirState]);
-
-  // ── Map Click Handler: Add Waypoint ──
+  // ── Map Click Handler: Snap to Roads (Roads Mode) ──
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
     const handleMapClick = async (e: maplibregl.MapMouseEvent) => {
-      const newCoord: [number, number] = [e.lngLat.lng, e.lngLat.lat];
-      pushHistory();
+      if (toolModeRef.current !== 'roads') return;
 
-      const newWp: RouteWaypoint = {
-        id: `wp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        name: `Oraliq bekat #${currentDirState.waypoints.length + 1}`,
-        coordinates: newCoord,
-        order: currentDirState.waypoints.length,
-      };
+      const pt: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+      recordHistory(currentCoords);
 
-      const updated = {
-        ...currentDirState,
-        waypoints: [...currentDirState.waypoints, newWp],
-      };
+      if (currentCoords.length === 0) {
+        // Place first point
+        setCurrentCoords([pt]);
+        setIsDirty(true);
+        setToastMessage("Boshlang'ich nuqta belgilandi. Endi ko'chalar bo'ylab keyingi nuqtani bosing — chiziq avtomatik yo'llar bo'ylab yotadi 🛣️");
+        return;
+      }
 
-      const calculated = await recalculatePath(updated);
-      setCurrentDirState(calculated);
+      // Connect along real street network
+      setIsRouting(true);
+      try {
+        const lastPt = currentCoords[currentCoords.length - 1];
+        const roadSegment = await fetchRoadSegment(lastPt, pt);
+
+        // Remove duplicate connection point if present
+        const cleanSegment = roadSegment.length > 1 ? roadSegment.slice(1) : roadSegment;
+
+        setCurrentCoords(prev => [...prev, ...cleanSegment]);
+        setIsDirty(true);
+      } catch (err) {
+        console.error('Road routing error:', err);
+        setCurrentCoords(prev => [...prev, pt]);
+      } finally {
+        setIsRouting(false);
+      }
     };
 
     map.on('click', handleMapClick);
     return () => {
       map.off('click', handleMapClick);
     };
-  }, [currentDirState, pushHistory, recalculatePath, setCurrentDirState]);
+  }, [currentCoords, recordHistory, setCurrentCoords]);
 
-  // ── Actions: Fit Bounds ──
-  const handleFitBounds = () => {
+  // ── Interactive Map Drawing Listeners (Freehand Mode) ──
+  useEffect(() => {
     const map = mapRef.current;
-    if (!map || !currentDirState.geometry || currentDirState.geometry.coordinates.length === 0) return;
+    if (!map) return;
 
-    const bounds = new maplibregl.LngLatBounds();
-    currentDirState.geometry.coordinates.forEach(c => bounds.extend(c));
-    map.fitBounds(bounds, { padding: 80, duration: 1000 });
-  };
+    // Mouse Down: Start freehand stroke
+    const handleMouseDown = (e: maplibregl.MapMouseEvent) => {
+      if (toolModeRef.current !== 'freehand') return;
+      if (e.originalEvent.button !== 0) return;
 
-  // ── Actions: Undo Last Edit ──
-  const handleUndo = () => {
-    if (history.length === 0) return;
-    const last = history[history.length - 1];
-    setHistory(prev => prev.slice(0, -1));
-    setOutbound(last.outbound);
-    setInbound(last.inbound);
-    setToastMessage("Oxirgi amal bekor qilindi (Undo)");
-  };
+      isDrawingRef.current = true;
+      const pt: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+      currentStrokeRef.current = [pt];
 
-  // ── Waypoint Reordering & Deletion ──
-  const handleDeleteWaypoint = async (wpId: string) => {
-    pushHistory();
-    const updated = {
-      ...currentDirState,
-      waypoints: currentDirState.waypoints.filter(w => w.id !== wpId),
+      setCurrentCoords(prev => {
+        recordHistory(prev);
+        return [...prev, pt];
+      });
+      setIsDirty(true);
     };
-    const calculated = await recalculatePath(updated);
-    setCurrentDirState(calculated);
-  };
 
-  const handleMoveWaypoint = async (idx: number, direction: 'up' | 'down') => {
-    if (
-      (direction === 'up' && idx === 0) ||
-      (direction === 'down' && idx === currentDirState.waypoints.length - 1)
-    ) {
+    // Mouse Move: Freehand drag drawing
+    const handleMouseMove = (e: maplibregl.MapMouseEvent) => {
+      if (!isDrawingRef.current || toolModeRef.current !== 'freehand') return;
+
+      const pt: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+      const stroke = currentStrokeRef.current;
+      const lastPt = stroke[stroke.length - 1];
+
+      if (!lastPt || isFarEnough(lastPt, pt, 12)) {
+        currentStrokeRef.current.push(pt);
+        setCurrentCoords(prev => [...prev, pt]);
+      }
+    };
+
+    // Mouse Up: End freehand stroke
+    const handleMouseUp = () => {
+      if (!isDrawingRef.current) return;
+      isDrawingRef.current = false;
+      currentStrokeRef.current = [];
+    };
+
+    map.on('mousedown', handleMouseDown);
+    map.on('mousemove', handleMouseMove);
+    map.on('mouseup', handleMouseUp);
+
+    const handleGlobalMouseUp = () => {
+      if (isDrawingRef.current) {
+        isDrawingRef.current = false;
+        currentStrokeRef.current = [];
+      }
+    };
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+
+    return () => {
+      map.off('mousedown', handleMouseDown);
+      map.off('mousemove', handleMouseMove);
+      map.off('mouseup', handleMouseUp);
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, [recordHistory, setCurrentCoords]);
+
+  // ── Keyboard Shortcuts (Ctrl+Z) ──
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+
+  // ── Action: Undo ──
+  const handleUndo = () => {
+    if (currentHistory.length === 0) {
+      setToastMessage("Bekor qilish uchun tarix mavjud emas");
       return;
     }
-    pushHistory();
-    const list = [...currentDirState.waypoints];
-    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-    const temp = list[idx];
-    list[idx] = list[targetIdx];
-    list[targetIdx] = temp;
-
-    const updated = { ...currentDirState, waypoints: list };
-    const calculated = await recalculatePath(updated);
-    setCurrentDirState(calculated);
+    const previous = currentHistory[currentHistory.length - 1];
+    setCurrentHistory(prev => prev.slice(0, -1));
+    setCurrentCoords(previous);
+    setIsDirty(true);
+    setToastMessage("Oxirgi amal bekor qilindi (Undo) ↩️");
   };
 
-  // ── Save Draft ──
+  // ── Action: Clear Line (Tozalash) ──
+  const handleClear = () => {
+    if (currentCoords.length === 0) return;
+    if (window.confirm("Haqiqatan ham chizilgan marshrut chizig'ini tozalab tashlamoqchimisiz?")) {
+      recordHistory(currentCoords);
+      setCurrentCoords([]);
+      setIsDirty(true);
+      setToastMessage("Marshrut chizig'i tozalandi 🗑️");
+    }
+  };
+
+  // ── Action: Fit Bounds ──
+  const handleFitBounds = () => {
+    const map = mapRef.current;
+    if (!map || currentCoords.length === 0) {
+      setToastMessage("Avval xaritada chiziq chizing");
+      return;
+    }
+    const bounds = new maplibregl.LngLatBounds();
+    currentCoords.forEach(c => bounds.extend(c));
+    map.fitBounds(bounds, { padding: 80, duration: 800 });
+  };
+
+  // ── Action: Copy Outbound to Inbound (Reversed) ──
+  const handleCopyInverted = () => {
+    if (outboundCoords.length === 0) {
+      setToastMessage("Avval Borish (Outbound) yo'nalishini chizing");
+      return;
+    }
+    const reversed = [...outboundCoords].reverse();
+    setInboundCoords(reversed);
+    setActiveDirection('inbound');
+    setIsDirty(true);
+    setToastMessage("Borish yo'nalishi Qaytishga teskari tartibda nusxalandi! 🔄");
+  };
+
+  // ── Action: Save Draft ──
   const handleSaveDraft = async () => {
+    const routeId = id || `rt-${Date.now().toString().slice(-4)}`;
+    const startPoint = outboundCoords[0] ? { name: routeName.split('—')[0]?.trim() || "Bosh nuqta", coordinates: outboundCoords[0] } : null;
+    const endPoint = outboundCoords[outboundCoords.length - 1] ? { name: routeName.split('—')[1]?.trim() || "Oxirgi nuqta", coordinates: outboundCoords[outboundCoords.length - 1] } : null;
+
     const draft: Partial<RouteDraft> = {
-      routeId: id || `rt-${Date.now().toString().slice(-4)}`,
+      routeId,
       routeNumber,
       routeName,
       status: 'draft',
-      outbound,
-      inbound,
+      outbound: {
+        direction: 'outbound',
+        startPoint,
+        endPoint,
+        waypoints: [],
+        geometry: { type: 'LineString', coordinates: outboundCoords },
+        distanceKm: calculateHaversineKm(outboundCoords),
+        durationMin: Math.max(1, Math.round((calculateHaversineKm(outboundCoords) / 22) * 60)),
+        isDirty: false,
+      },
+      inbound: {
+        direction: 'inbound',
+        startPoint: endPoint,
+        endPoint: startPoint,
+        waypoints: [],
+        geometry: { type: 'LineString', coordinates: inboundCoords },
+        distanceKm: calculateHaversineKm(inboundCoords),
+        durationMin: Math.max(1, Math.round((calculateHaversineKm(inboundCoords) / 22) * 60)),
+        isDirty: false,
+      },
     };
-    await routeEditorApi.saveDraft(draft.routeId!, draft);
+
+    await routeEditorApi.saveDraft(routeId, draft);
+    setIsDirty(false);
     setRouteStatus('draft');
-    setOutbound(prev => ({ ...prev, isDirty: false }));
-    setInbound(prev => ({ ...prev, isDirty: false }));
     setToastMessage("Qoralama muvaffaqiyatli saqlandi! 💾");
   };
 
-  // ── Publish Route ──
+  // ── Action: Publish Route ──
   const handlePublish = async () => {
+    if (outboundCoords.length < 2) {
+      setToastMessage("Chop etishdan oldin marshrut chizig'ini chizing!");
+      return;
+    }
+    const routeId = id || `rt-${Date.now().toString().slice(-4)}`;
+    const startPoint = outboundCoords[0] ? { name: routeName.split('—')[0]?.trim() || "Bosh nuqta", coordinates: outboundCoords[0] } : null;
+    const endPoint = outboundCoords[outboundCoords.length - 1] ? { name: routeName.split('—')[1]?.trim() || "Oxirgi nuqta", coordinates: outboundCoords[outboundCoords.length - 1] } : null;
+
     const draft: Partial<RouteDraft> = {
-      routeId: id || `rt-${Date.now().toString().slice(-4)}`,
+      routeId,
       routeNumber,
       routeName,
       status: 'published',
-      outbound,
-      inbound,
+      outbound: {
+        direction: 'outbound',
+        startPoint,
+        endPoint,
+        waypoints: [],
+        geometry: { type: 'LineString', coordinates: outboundCoords },
+        distanceKm: calculateHaversineKm(outboundCoords),
+        durationMin: Math.max(1, Math.round((calculateHaversineKm(outboundCoords) / 22) * 60)),
+        isDirty: false,
+      },
+      inbound: {
+        direction: 'inbound',
+        startPoint: endPoint,
+        endPoint: startPoint,
+        waypoints: [],
+        geometry: { type: 'LineString', coordinates: inboundCoords },
+        distanceKm: calculateHaversineKm(inboundCoords),
+        durationMin: Math.max(1, Math.round((calculateHaversineKm(inboundCoords) / 22) * 60)),
+        isDirty: false,
+      },
     };
-    await routeEditorApi.publishRoute(draft.routeId!, draft);
+
+    await routeEditorApi.publishRoute(routeId, draft);
+    setIsDirty(false);
     setRouteStatus('published');
-    setOutbound(prev => ({ ...prev, isDirty: false }));
-    setInbound(prev => ({ ...prev, isDirty: false }));
     setToastMessage("Yo'nalish muvaffaqiyatli chop etildi (Published)! 🚀");
   };
 
   return (
     <div className="route-editor-layout">
-      {/* ── Top Command Bar ── */}
+      {/* ── Top Bar ── */}
       <header className="editor-top-bar">
         <div className="editor-top-bar__left">
           <button
@@ -431,7 +547,10 @@ export function RouteEditor() {
               type="text"
               className="input-route-num"
               value={routeNumber}
-              onChange={e => setRouteNumber(e.target.value)}
+              onChange={e => {
+                setRouteNumber(e.target.value);
+                setIsDirty(true);
+              }}
               placeholder="№"
               title="Yo'nalish raqami"
             />
@@ -439,7 +558,10 @@ export function RouteEditor() {
               type="text"
               className="input-route-name"
               value={routeName}
-              onChange={e => setRouteName(e.target.value)}
+              onChange={e => {
+                setRouteName(e.target.value);
+                setIsDirty(true);
+              }}
               placeholder="Yo'nalish nomi..."
               title="Yo'nalish nomi"
             />
@@ -449,7 +571,7 @@ export function RouteEditor() {
             {routeStatus === 'draft' ? 'Qoralama' : 'Chop etilgan'}
           </span>
 
-          {(outbound.isDirty || inbound.isDirty) && (
+          {isDirty && (
             <span className="unsaved-dot">
               <i className="ri-record-circle-line" />
               Saqlanmagan o'zgarishlar
@@ -458,25 +580,6 @@ export function RouteEditor() {
         </div>
 
         <div className="editor-top-bar__actions">
-          <button
-            className="btn-editor-action"
-            onClick={handleFitBounds}
-            title="Marshrutni to'liq ekranga moslash"
-          >
-            <i className="ri-scan-2-line" />
-            Fit Bounds
-          </button>
-
-          <button
-            className="btn-editor-action"
-            onClick={handleUndo}
-            disabled={history.length === 0}
-            title="Oxirgi tahrirni bekor qilish"
-          >
-            <i className="ri-arrow-go-back-line" />
-            Undo
-          </button>
-
           <button className="btn-editor-action btn-save-draft" onClick={handleSaveDraft}>
             <i className="ri-save-3-line" />
             Qoralamani saqlash
@@ -489,190 +592,178 @@ export function RouteEditor() {
         </div>
       </header>
 
-      {/* ── Main Split-Screen Workspace ── */}
+      {/* ── Workspace ── */}
       <div className="editor-workspace">
-        {/* Left Control Sidebar */}
-        <aside className="editor-sidebar">
-          {/* Direction Switch Tabs */}
-          <div className="direction-tabs-header">
+        {/* Left Compact Paint Toolbar Sidebar */}
+        <aside className="editor-paint-sidebar">
+          {/* Direction Tabs */}
+          <div className="paint-dir-tabs">
             <button
-              className={`direction-tab-btn ${activeDirection === 'outbound' ? 'active' : ''}`}
+              className={`paint-dir-tab ${activeDirection === 'outbound' ? 'active' : ''}`}
               onClick={() => setActiveDirection('outbound')}
             >
-              <span className="direction-tab-btn__title">
-                <i className="ri-arrow-right-line" />
-                Borish (Outbound)
-              </span>
-              <span className="direction-tab-btn__stats">
-                {outbound.distanceKm} km • ~{outbound.durationMin} daq
-              </span>
+              <i className="ri-arrow-right-line" />
+              Borish ({calculateHaversineKm(outboundCoords)} km)
             </button>
-
             <button
-              className={`direction-tab-btn ${activeDirection === 'inbound' ? 'active' : ''}`}
+              className={`paint-dir-tab ${activeDirection === 'inbound' ? 'active' : ''}`}
               onClick={() => setActiveDirection('inbound')}
             >
-              <span className="direction-tab-btn__title">
-                <i className="ri-arrow-left-line" />
-                Qaytish (Inbound)
-              </span>
-              <span className="direction-tab-btn__stats">
-                {inbound.distanceKm} km • ~{inbound.durationMin} daq
-              </span>
+              <i className="ri-arrow-left-line" />
+              Qaytish ({calculateHaversineKm(inboundCoords)} km)
             </button>
           </div>
 
-          {/* Sidebar Content */}
-          <div className="editor-sidebar__content">
-            {/* Route Stats */}
-            <div className="route-stats-strip">
-              <div className="stat-box">
-                <span className="val accent">{currentDirState.distanceKm}</span>
-                <span className="lbl">Masofa (km)</span>
-              </div>
-              <div className="stat-box">
-                <span className="val">{currentDirState.durationMin}</span>
-                <span className="lbl">Vaqt (daq)</span>
-              </div>
-              <div className="stat-box">
-                <span className="val">{currentDirState.waypoints.length + 2}</span>
-                <span className="lbl">Jami bekat</span>
-              </div>
+          {/* Stats Widget */}
+          <div className="paint-stats-card">
+            <div className="paint-stat-item">
+              <span className="stat-label">Masofa</span>
+              <span className="stat-value primary">{distanceKm} km</span>
             </div>
+            <div className="paint-stat-item">
+              <span className="stat-label">Vaqt</span>
+              <span className="stat-value">~{durationMin} daq</span>
+            </div>
+            <div className="paint-stat-item">
+              <span className="stat-label">Nuqtalar</span>
+              <span className="stat-value">{currentCoords.length} ta</span>
+            </div>
+          </div>
 
-            {/* Sequence of Points */}
-            <div className="points-sequence-container">
-              {/* Point A (Start) */}
-              <div className="point-card">
-                <div className="point-card__left">
-                  <div className="point-marker-dot start">A</div>
-                  <div style={{ flex: 1 }}>
-                    <input
-                      type="text"
-                      className="point-card__name-input"
-                      value={currentDirState.startPoint?.name || ''}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setCurrentDirState(prev => ({
-                          ...prev,
-                          startPoint: prev.startPoint ? { ...prev.startPoint, name: val } : null,
-                        }));
-                      }}
-                      placeholder="Bosh bekat (A)"
-                    />
-                    <div className="point-card__coords">
-                      {currentDirState.startPoint?.coordinates[1].toFixed(4)},{' '}
-                      {currentDirState.startPoint?.coordinates[0].toFixed(4)}
-                    </div>
-                  </div>
-                </div>
+          {/* Drawing Tools Buttons */}
+          <div className="paint-tools-panel">
+            <div className="paint-tools-title">Chizish asbobi (Mode)</div>
+
+            <button
+              className={`btn-paint-tool ${toolMode === 'roads' ? 'active-draw' : ''}`}
+              onClick={() => {
+                setToolMode('roads');
+                setToastMessage("Yo'llarga yopishish (Snap to Roads) yoqildi: Xaritada ko'chalarga bosing — chiziq avtomatik yo'llar bo'ylab chiziladi 🛣️");
+              }}
+            >
+              <i className="ri-road-map-line" />
+              <div>
+                <strong>Yo'llar bo'ylab (Snap to Roads)</strong>
+                <small>Ko'chalarga bosing — yo'l bo'ylab ulanadi</small>
               </div>
+            </button>
 
-              {/* Waypoints List */}
-              {currentDirState.waypoints.map((wp, idx) => (
-                <div key={wp.id} className="point-card">
-                  <div className="point-card__left">
-                    <div className="point-marker-dot waypoint">{idx + 1}</div>
-                    <div style={{ flex: 1 }}>
-                      <input
-                        type="text"
-                        className="point-card__name-input"
-                        value={wp.name}
-                        onChange={e => {
-                          const val = e.target.value;
-                          setCurrentDirState(prev => ({
-                            ...prev,
-                            waypoints: prev.waypoints.map(w => (w.id === wp.id ? { ...w, name: val } : w)),
-                          }));
-                        }}
-                        placeholder={`Oraliq bekat #${idx + 1}`}
-                      />
-                      <div className="point-card__coords">
-                        {wp.coordinates[1].toFixed(4)}, {wp.coordinates[0].toFixed(4)}
-                      </div>
-                    </div>
-                  </div>
+            <button
+              className={`btn-paint-tool ${toolMode === 'freehand' ? 'active-draw' : ''}`}
+              onClick={() => {
+                setToolMode('freehand');
+                setToastMessage("Erkin chizish (Freehand) yoqildi: Sichqonchani bosib xaritada chizing ✏️");
+              }}
+            >
+              <i className="ri-pencil-fill" />
+              <div>
+                <strong>Erkin chizish (Freehand Paint)</strong>
+                <small>Sichqonchani bosib ushlab chizing</small>
+              </div>
+            </button>
 
-                  <div className="point-card__actions">
-                    <button
-                      className="btn-point-icon"
-                      onClick={() => handleMoveWaypoint(idx, 'up')}
-                      disabled={idx === 0}
-                      title="Yuqoriga surish"
-                    >
-                      <i className="ri-arrow-up-s-line" />
-                    </button>
-                    <button
-                      className="btn-point-icon"
-                      onClick={() => handleMoveWaypoint(idx, 'down')}
-                      disabled={idx === currentDirState.waypoints.length - 1}
-                      title="Pastga surish"
-                    >
-                      <i className="ri-arrow-down-s-line" />
-                    </button>
-                    <button
-                      className="btn-point-icon delete"
-                      onClick={() => handleDeleteWaypoint(wp.id)}
-                      title="O'chirish"
-                    >
-                      <i className="ri-close-line" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+            <button
+              className={`btn-paint-tool ${toolMode === 'pan' ? 'active-pan' : ''}`}
+              onClick={() => {
+                setToolMode('pan');
+                setToastMessage("Xaritani surish (Pan) rejimi yoqildi ✋");
+              }}
+            >
+              <i className="ri-hand-coin-line" />
+              <div>
+                <strong>Xaritani surish (Pan)</strong>
+                <small>Xaritani erkin harakatlantirish</small>
+              </div>
+            </button>
 
-              {/* Add Waypoint hint button */}
-              <div
-                className="btn-add-waypoint-strip"
-                onClick={() => setToastMessage("Xaritada kerakli nuqtaga bosing — waypoint avtomatik qo'shiladi")}
+            <div className="paint-actions-grid">
+              <button
+                className="btn-paint-subaction"
+                onClick={handleUndo}
+                disabled={currentHistory.length === 0}
+                title="Oxirgi amalni bekor qilish (Ctrl+Z)"
               >
-                <i className="ri-add-circle-line" />
-                Xaritadan Waypoint qo'shish
-              </div>
+                <i className="ri-arrow-go-back-line" />
+                Undo
+              </button>
 
-              {/* Point B (End) */}
-              <div className="point-card">
-                <div className="point-card__left">
-                  <div className="point-marker-dot end">B</div>
-                  <div style={{ flex: 1 }}>
-                    <input
-                      type="text"
-                      className="point-card__name-input"
-                      value={currentDirState.endPoint?.name || ''}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setCurrentDirState(prev => ({
-                          ...prev,
-                          endPoint: prev.endPoint ? { ...prev.endPoint, name: val } : null,
-                        }));
-                      }}
-                      placeholder="Oxirgi bekat (B)"
-                    />
-                    <div className="point-card__coords">
-                      {currentDirState.endPoint?.coordinates[1].toFixed(4)},{' '}
-                      {currentDirState.endPoint?.coordinates[0].toFixed(4)}
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <button
+                className="btn-paint-subaction danger"
+                onClick={handleClear}
+                disabled={currentCoords.length === 0}
+                title="Chiziqni tozalash"
+              >
+                <i className="ri-delete-bin-line" />
+                Tozalash
+              </button>
+
+              <button
+                className="btn-paint-subaction"
+                onClick={handleFitBounds}
+                disabled={currentCoords.length === 0}
+                title="Marshrutni ekranga moslash"
+              >
+                <i className="ri-scan-2-line" />
+                Fit Map
+              </button>
             </div>
+
+            {activeDirection === 'outbound' && outboundCoords.length > 1 && (
+              <button className="btn-copy-inverted" onClick={handleCopyInverted}>
+                <i className="ri-shuffle-line" />
+                Qaytishga teskari nusxalash
+              </button>
+            )}
+          </div>
+
+          {/* Quick Guidance Box */}
+          <div className="paint-instructions-box">
+            <div className="instructions-title">
+              <i className="ri-lightbulb-line" />
+              Qanday chiziladi?
+            </div>
+            <p>
+              1. <strong>Yo'llar bo'ylab (Tavsiya etiladi):</strong> Xaritada ko'cha va burilish nuqtalariga bosing — chiziq binolarni kesib o'tmasdan, aynan <strong>haqiqiy ko'chalar bo'ylab</strong> chiziladi!
+            </p>
+            <p>
+              2. <strong>Erkin chizish:</strong> Sichqonchani bosib xohlagan joyingizdan chiziq tortishingiz mumkin.
+            </p>
+            <p>
+              3. Xato qilsangiz <strong>Undo (Ctrl+Z)</strong> tugmasini bosing.
+            </p>
           </div>
         </aside>
 
         {/* Right Map Canvas */}
         <main className="editor-map-canvas">
-          <div className="map-floating-instructions">
-            <i className="ri-cursor-line" />
-            <span>
-              Xaritaga bosib yangi waypoint qo'shing yoki mavjud nuqtalarni suring (Drag & Drop)
-            </span>
+          <div className={`map-floating-instructions ${toolMode !== 'pan' ? 'draw-active' : ''}`}>
+            {isRouting ? (
+              <>
+                <i className="ri-loader-4-line ri-spin" style={{ color: '#fde047' }} />
+                <span>Yo'llar bo'ylab hisoblanmoqda...</span>
+              </>
+            ) : (
+              <>
+                <i className={toolMode === 'roads' ? 'ri-road-map-line' : toolMode === 'freehand' ? 'ri-pencil-fill' : 'ri-cursor-line'} />
+                <span>
+                  {toolMode === 'roads'
+                    ? "🛣️ Yo'llar bo'ylab chizish faol: Xaritadagi ko'cha yoki burilishlarga ketma-ket bosing — marshrut faqat yo'llar bo'ylab chiziladi!"
+                    : toolMode === 'freehand'
+                    ? "✏️ Erkin chizish rejimi: Sichqonchani bosib ushlab chizing"
+                    : "✋ Xaritani surish: Xaritani erkin harakatlantiring"}
+                </span>
+              </>
+            )}
           </div>
 
-          <div ref={mapContainer} className="editor-map-container" />
+          <div
+            ref={mapContainer}
+            className={`editor-map-container ${toolMode !== 'pan' ? 'cursor-paint' : 'cursor-grab'}`}
+          />
         </main>
       </div>
 
-      {/* Toast popup */}
+      {/* Toast Feedback */}
       {toastMessage && (
         <div
           className="payment-toast-banner success"
@@ -680,7 +771,7 @@ export function RouteEditor() {
           onClick={() => setToastMessage(null)}
         >
           <div className="payment-toast-content">
-            <i className="ri-checkbox-circle-fill" />
+            <i className="ri-information-fill" />
             <div className="payment-toast-text">
               <p>{toastMessage}</p>
             </div>

@@ -10,225 +10,55 @@ import type {
 let devTransactions: UyushmaPaymentTransaction[] = [];
 let devCashouts: UyushmaCashoutRequest[] = [];
 
+function getStoredCashouts(uyushmaId: string): UyushmaCashoutRequest[] {
+  try {
+    const raw = localStorage.getItem('mashrutgo_dev_cashouts');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map((c: any) => ({
+          id: String(c.id),
+          uyushma_id: c.uyushma_id || uyushmaId,
+          driver_id: String(c.driver_id || 'usr-driver-1'),
+          driver_name: c.driver_name || 'Anvar Qodirov',
+          driver_phone: c.driver_phone || '+998 90 123 45 67',
+          vehicle_id: String(c.vehicle_id || 'veh-101'),
+          vehicle_plate: c.vehicle_plate || '60 A 777 AA',
+          amount: Number(c.amount ?? c.amount_uzs ?? 0),
+          method: c.method || 'card',
+          payout_details: c.payout_details || c.notes || '8600 •••• •••• 4123 (Uzcard)',
+          status: c.status || 'pending',
+          created_at: c.created_at || new Date().toISOString(),
+          processed_at: c.processed_at,
+          processed_by: c.processed_by,
+          rejection_reason: c.rejection_reason,
+          payment_reference: c.payment_reference,
+        }));
+      }
+    }
+  } catch {}
+  return [];
+}
+
+function saveStoredCashouts(list: any[]) {
+  try {
+    localStorage.setItem('mashrutgo_dev_cashouts', JSON.stringify(list));
+  } catch {}
+}
+
 function initDevData(uyushmaId: string) {
   if (devTransactions.length > 0) return;
 
-  const now = Date.now();
-  const minutesAgo = (m: number) => new Date(now - m * 60 * 1000).toISOString();
-  const hoursAgo = (h: number) => new Date(now - h * 3600 * 1000).toISOString();
-  const daysAgo = (d: number) => new Date(now - d * 86400 * 1000).toISOString();
+  devTransactions = [];
 
-  devTransactions = [
-    {
-      id: 'tx-001',
-      reference_id: 'CLK-904821',
-      uyushma_id: uyushmaId,
-      route_id: 'rt-101',
-      route_number: '12',
-      vehicle_id: 'veh-101',
-      vehicle_plate: '60 A 777 AA',
-      driver_id: 'usr-driver-1',
-      driver_name: 'Anvar Qodirov',
-      amount: 3000,
-      commission_amount: 30, // 1%
-      net_amount: 2970,
-      status: 'completed',
-      method: 'click',
-      created_at: minutesAgo(4),
-      passenger_identifier: 'Mijoz #4829',
-    },
-    {
-      id: 'tx-002',
-      reference_id: 'PAY-312984',
-      uyushma_id: uyushmaId,
-      route_id: 'rt-101',
-      route_number: '12',
-      vehicle_id: 'veh-101',
-      vehicle_plate: '60 A 777 AA',
-      driver_id: 'usr-driver-1',
-      driver_name: 'Anvar Qodirov',
-      amount: 3000,
-      commission_amount: 30,
-      net_amount: 2970,
-      status: 'completed',
-      method: 'payme',
-      created_at: minutesAgo(12),
-      passenger_identifier: 'Mijoz #7124',
-    },
-    {
-      id: 'tx-003',
-      reference_id: 'NFC-618402',
-      uyushma_id: uyushmaId,
-      route_id: 'rt-101',
-      route_number: '12',
-      vehicle_id: 'veh-102',
-      vehicle_plate: '60 B 123 BB',
-      driver_id: 'usr-driver-2',
-      driver_name: 'Jasur Saidov',
-      amount: 3000,
-      commission_amount: 30,
-      net_amount: 2970,
-      status: 'completed',
-      method: 'nfc',
-      created_at: minutesAgo(26),
-      passenger_identifier: 'Humo *** 8201',
-    },
-    {
-      id: 'tx-004',
-      reference_id: 'CLK-881203',
-      uyushma_id: uyushmaId,
-      route_id: 'rt-101',
-      route_number: '12',
-      vehicle_id: 'veh-101',
-      vehicle_plate: '60 A 777 AA',
-      driver_id: 'usr-driver-1',
-      driver_name: 'Anvar Qodirov',
-      amount: 3000,
-      commission_amount: 0,
-      net_amount: 0,
-      status: 'refunded',
-      method: 'click',
-      created_at: hoursAgo(2.1),
-      refund_reason: "Mijoz adashib to'ladi",
-      refunded_at: hoursAgo(2.0),
-      passenger_identifier: 'Mijoz #1042',
-    },
-    {
-      id: 'tx-005',
-      reference_id: 'WLT-812049',
-      uyushma_id: uyushmaId,
-      route_id: 'rt-102',
-      route_number: '1',
-      vehicle_id: 'veh-103',
-      vehicle_plate: '60 C 456 CC',
-      driver_id: 'usr-driver-3',
-      driver_name: 'Olimjon Rustamov',
-      amount: 3000,
-      commission_amount: 30,
-      net_amount: 2970,
-      status: 'completed',
-      method: 'wallet',
-      created_at: hoursAgo(3.4),
-      passenger_identifier: 'Hamyon #4190',
-    },
-    {
-      id: 'tx-006',
-      reference_id: 'PAY-741920',
-      uyushma_id: uyushmaId,
-      route_id: 'rt-103',
-      route_number: '24',
-      vehicle_id: 'veh-104',
-      vehicle_plate: '60 D 999 DD',
-      driver_id: 'usr-driver-4',
-      driver_name: 'Bobur Xolmatov',
-      amount: 3000,
-      commission_amount: 30,
-      net_amount: 2970,
-      status: 'completed',
-      method: 'payme',
-      created_at: hoursAgo(5.1),
-      passenger_identifier: 'Mijoz #9921',
-    },
-    {
-      id: 'tx-007',
-      reference_id: 'CLK-109284',
-      uyushma_id: uyushmaId,
-      route_id: 'rt-102',
-      route_number: '1',
-      vehicle_id: 'veh-103',
-      vehicle_plate: '60 C 456 CC',
-      driver_id: 'usr-driver-3',
-      driver_name: 'Olimjon Rustamov',
-      amount: 3000,
-      commission_amount: 30,
-      net_amount: 2970,
-      status: 'completed',
-      method: 'click',
-      created_at: daysAgo(1),
-      passenger_identifier: 'Mijoz #3812',
-    },
-  ];
 
-  devCashouts = [
-    {
-      id: 'csh-101',
-      uyushma_id: uyushmaId,
-      driver_id: 'usr-driver-1',
-      driver_name: 'Anvar Qodirov',
-      driver_phone: '+998 90 123 45 67',
-      vehicle_id: 'veh-101',
-      vehicle_plate: '60 A 777 AA',
-      amount: 50000,
-      method: 'card',
-      payout_details: '8600 •••• •••• 4123 (Uzcard)',
-      status: 'pending',
-      created_at: hoursAgo(2),
-    },
-    {
-      id: 'csh-102',
-      uyushma_id: uyushmaId,
-      driver_id: 'usr-driver-2',
-      driver_name: 'Jasur Saidov',
-      driver_phone: '+998 91 234 56 78',
-      vehicle_id: 'veh-102',
-      vehicle_plate: '60 B 123 BB',
-      amount: 150000,
-      method: 'cash',
-      payout_details: 'Uyushma kassasidan naqd olish',
-      status: 'pending',
-      created_at: hoursAgo(4),
-    },
-    {
-      id: 'csh-103',
-      uyushma_id: uyushmaId,
-      driver_id: 'usr-driver-4',
-      driver_name: 'Bobur Xolmatov',
-      driver_phone: '+998 94 456 78 90',
-      vehicle_id: 'veh-104',
-      vehicle_plate: '60 D 999 DD',
-      amount: 220000,
-      method: 'card',
-      payout_details: '9860 •••• •••• 9812 (Humo)',
-      status: 'approved',
-      created_at: daysAgo(1),
-      processed_at: hoursAgo(10),
-      processed_by: 'Bosh hisobchi',
-    },
-    {
-      id: 'csh-104',
-      uyushma_id: uyushmaId,
-      driver_id: 'usr-driver-3',
-      driver_name: 'Olimjon Rustamov',
-      driver_phone: '+998 93 345 67 89',
-      vehicle_id: 'veh-103',
-      vehicle_plate: '60 C 456 CC',
-      amount: 80000,
-      method: 'card',
-      payout_details: '8600 •••• •••• 0092 (Uzcard)',
-      status: 'paid',
-      created_at: daysAgo(2),
-      processed_at: daysAgo(1),
-      processed_by: 'Kassa xodimi',
-      payment_reference: 'BNK-TXN-991204',
-    },
-    {
-      id: 'csh-105',
-      uyushma_id: uyushmaId,
-      driver_id: 'usr-driver-2',
-      driver_name: 'Jasur Saidov',
-      driver_phone: '+998 91 234 56 78',
-      vehicle_id: 'veh-102',
-      vehicle_plate: '60 B 123 BB',
-      amount: 300000,
-      method: 'card',
-      payout_details: '8600 •••• •••• 5511 (Uzcard)',
-      status: 'rejected',
-      created_at: daysAgo(3),
-      processed_at: daysAgo(2),
-      processed_by: 'Bosh hisobchi',
-      rejection_reason: 'Karta raqami egasining familiyasi haydovchi nomiga to\'g\'ri kelmadi.',
-    },
-  ];
+  const stored = getStoredCashouts(uyushmaId);
+  if (stored.length > 0) {
+    devCashouts = stored;
+  } else {
+    devCashouts = [];
+    saveStoredCashouts(devCashouts);
+  }
 }
 
 export const financeApi = {
@@ -309,13 +139,36 @@ export const financeApi = {
   async getCashouts(uyushmaId: string, status?: CashoutActionStatus | 'all'): Promise<UyushmaCashoutRequest[]> {
     try {
       const q = status && status !== 'all' ? `?status=${status}` : '';
-      return await apiClient.get<UyushmaCashoutRequest[]>(`/uyushma/${uyushmaId}/cashouts${q}`);
+      const raw = await apiClient.get<any[]>(`/uyushma/${uyushmaId}/cashouts${q}`);
+      if (Array.isArray(raw)) {
+        return raw.map(r => ({
+          id: String(r.id),
+          uyushma_id: String(r.uyushma_id || uyushmaId),
+          driver_id: String(r.driver_id || 'usr-driver-1'),
+          driver_name: r.driver_name || 'Haydovchi',
+          driver_phone: r.driver_phone || '+998 90 123 45 67',
+          vehicle_id: String(r.vehicle_id || 'veh-101'),
+          vehicle_plate: r.vehicle_plate || '60 A 777 AA',
+          amount: Number(r.amount ?? r.amount_uzs ?? 0),
+          method: r.method || 'card',
+          payout_details: r.payout_details || r.notes || "Karta / Bank hisob raqami",
+          status: (r.status as CashoutActionStatus) || 'pending',
+          created_at: r.created_at || new Date().toISOString(),
+          processed_at: r.processed_at,
+          processed_by: r.processed_by,
+          rejection_reason: r.rejection_reason,
+          payment_reference: r.payment_reference,
+        }));
+      }
+      return [];
     } catch {
       initDevData(uyushmaId);
+      const stored = getStoredCashouts(uyushmaId);
+      const list = stored.length > 0 ? stored : devCashouts;
       if (status && status !== 'all') {
-        return devCashouts.filter(c => c.status === status);
+        return list.filter(c => c.status === status);
       }
-      return [...devCashouts];
+      return [...list];
     }
   },
 
@@ -324,14 +177,23 @@ export const financeApi = {
    */
   async approveCashout(uyushmaId: string, cashoutId: string): Promise<UyushmaCashoutRequest> {
     try {
-      return await apiClient.post<UyushmaCashoutRequest>(`/uyushma/${uyushmaId}/cashouts/${cashoutId}/approve`);
+      return await apiClient.post<UyushmaCashoutRequest>(`/uyushma/cashout/${cashoutId}/approve`);
     } catch {
-      const target = devCashouts.find(c => c.id === cashoutId);
-      if (!target) throw new Error("So'rov topilmadi");
-      target.status = 'approved';
-      target.processed_at = new Date().toISOString();
-      target.processed_by = 'Uyushma boshqaruvchisi';
-      return { ...target };
+      try {
+        return await apiClient.post<UyushmaCashoutRequest>(`/uyushma/${uyushmaId}/cashouts/${cashoutId}/approve`);
+      } catch {
+        initDevData(uyushmaId);
+        const stored = getStoredCashouts(uyushmaId);
+        const list = stored.length > 0 ? stored : devCashouts;
+        const target = list.find(c => c.id === cashoutId);
+        if (!target) throw new Error("So'rov topilmadi");
+        target.status = 'approved';
+        target.processed_at = new Date().toISOString();
+        target.processed_by = 'Uyushma boshqaruvchisi';
+        devCashouts = list;
+        saveStoredCashouts(list);
+        return { ...target };
+      }
     }
   },
 
@@ -344,17 +206,28 @@ export const financeApi = {
     }
 
     try {
-      return await apiClient.post<UyushmaCashoutRequest>(`/uyushma/${uyushmaId}/cashouts/${cashoutId}/reject`, {
+      return await apiClient.post<UyushmaCashoutRequest>(`/uyushma/cashout/${cashoutId}/reject`, {
         reason: auditReason,
       });
     } catch {
-      const target = devCashouts.find(c => c.id === cashoutId);
-      if (!target) throw new Error("So'rov topilmadi");
-      target.status = 'rejected';
-      target.rejection_reason = auditReason;
-      target.processed_at = new Date().toISOString();
-      target.processed_by = 'Uyushma boshqaruvchisi';
-      return { ...target };
+      try {
+        return await apiClient.post<UyushmaCashoutRequest>(`/uyushma/${uyushmaId}/cashouts/${cashoutId}/reject`, {
+          reason: auditReason,
+        });
+      } catch {
+        initDevData(uyushmaId);
+        const stored = getStoredCashouts(uyushmaId);
+        const list = stored.length > 0 ? stored : devCashouts;
+        const target = list.find(c => c.id === cashoutId);
+        if (!target) throw new Error("So'rov topilmadi");
+        target.status = 'rejected';
+        target.rejection_reason = auditReason;
+        target.processed_at = new Date().toISOString();
+        target.processed_by = 'Uyushma boshqaruvchisi';
+        devCashouts = list;
+        saveStoredCashouts(list);
+        return { ...target };
+      }
     }
   },
 

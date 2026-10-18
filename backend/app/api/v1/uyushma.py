@@ -536,3 +536,43 @@ def create_vehicle_for_uyushma(
         updated_at=v.updated_at,
     )
 
+
+
+@router.put("/{id}/drivers/{driver_id}/verify", response_model=DriverRead)
+def verify_uyushma_driver(
+    id: int,
+    driver_id: int,
+    current_user: User = Depends(require_uyushma_admin),
+    db: Session = Depends(get_db_dep),
+):
+    """Uyushma Admin verifies and activates a registered driver."""
+    verify_tenant_access(current_user, id)
+    dp = db.query(DriverProfile).filter(DriverProfile.id == driver_id, DriverProfile.uyushma_id == id).first()
+    if not dp:
+        raise HTTPException(status_code=404, detail="Haydovchi topilmadi")
+
+    dp.is_active = True
+    if dp.vehicle:
+        dp.vehicle.is_active = True
+    db.commit()
+    db.refresh(dp)
+
+    log_audit_event(
+        db=db,
+        action="driver.verified",
+        actor_user_id=current_user.id,
+        actor_role=current_user.role,
+        target_type="driver",
+        target_id=str(dp.id),
+    )
+
+    return DriverRead(
+        id=dp.id,
+        user_id=dp.user_id,
+        uyushma_id=dp.uyushma_id,
+        license_number=dp.license_number,
+        is_active=dp.is_active,
+        full_name=dp.user.full_name if dp.user else "",
+        phone=dp.user.phone if dp.user else "",
+        created_at=dp.created_at,
+    )

@@ -1,0 +1,32 @@
+services:
+  # ── Backend API ──
+  - type: web
+    name: mashrutgo-backend
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DEVSMS_API_KEY
+        value: 185c8a1dff0cf6b047a6526ba07bb32d6d34f4a606feddd21a713e9a85673a85
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: "*"
+
+  # ── Frontend Web & Admin Panel ──
+  - type: web
+    name: mashrutgo-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install --legacy-peer-deps && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE
+        value: https://mashrutgo-backend.onrender.com/api/v1
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

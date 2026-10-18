@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import { useDriverPayments } from '../../hooks/useDriverPayments';
 import type { DriverPayment } from '../../types/payment';
 import './DriverPayments.css';
@@ -28,6 +29,9 @@ export function DriverPayments() {
     clearNotification,
     vehicleId,
   } = useDriverPayments();
+
+  const { user } = useAuth();
+  const isSuperOrAdmin = user?.role === 'super_admin' || user?.role === 'admin';
 
   // Active tab state
   const [activeTab, setActiveTab] = useState<TabType>('payments');
@@ -116,8 +120,8 @@ export function DriverPayments() {
       return;
     }
 
-    if (balance && cashoutAmount > balance.available_balance) {
-      setCashoutError(`Mavjud balansdan (${balance.available_balance.toLocaleString('uz-UZ')} so'm) ko'p mablag' yechib bo'lmaydi.`);
+    if (balance && cashoutAmount > (balance.available_balance ?? 0)) {
+      setCashoutError(`Mavjud balansdan (${(balance.available_balance ?? 0).toLocaleString('uz-UZ')} so'm) ko'p mablag' yechib bo'lmaydi.`);
       return;
     }
 
@@ -136,17 +140,42 @@ export function DriverPayments() {
   };
 
   // Helper for relative or formatted time
-  const formatTime = (isoString: string) => {
+  const formatTime = (isoString?: string) => {
+    if (!isoString) return 'Yaqinda';
     try {
       const d = new Date(isoString);
+      if (isNaN(d.getTime())) return 'Yaqinda';
       return d.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
     } catch {
-      return isoString;
+      return 'Yaqinda';
     }
   };
 
   return (
     <div className="driver-payments-container">
+      {/* ── Super Admin Inspection Banner ── */}
+      {isSuperOrAdmin && (
+        <div style={{
+          background: 'rgba(59, 130, 246, 0.1)',
+          border: '1px solid rgba(59, 130, 246, 0.3)',
+          borderRadius: '10px',
+          padding: '0.6rem 0.85rem',
+          marginBottom: '0.75rem',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          fontSize: '0.8rem',
+          color: '#3b82f6',
+        }}>
+          <span>
+            <i className="ri-shield-user-line" style={{ marginRight: '0.4rem', verticalAlign: 'middle' }} />
+            <strong>Super Admin nazorati:</strong> Haydovchi ({vehicleId}) to'lovlar va hisob-kitob auditi.
+          </span>
+          <a href="/admin/payments" style={{ color: '#3b82f6', textDecoration: 'underline', fontWeight: 600 }}>
+            Uyushma boshqaruviga qaytish &rarr;
+          </a>
+        </div>
+      )}
       {/* ── Toast notification for incoming payments / alerts ── */}
       {recentNotification && (
         <div className={`payment-toast-banner ${recentNotification.type}`}>
@@ -370,7 +399,7 @@ export function DriverPayments() {
                   <div className="payment-card__right">
                     <div className={`payment-card__amount ${payment.status === 'refunded' ? 'refunded' : ''}`}>
                       {payment.status === 'refunded' ? '-' : '+'}
-                      {payment.amount.toLocaleString('uz-UZ')} UZS
+                      {((payment.amount ?? (payment as any).amount_uzs) ?? 0).toLocaleString('uz-UZ')} UZS
                     </div>
 
                     {payment.status === 'completed' ? (
@@ -444,11 +473,11 @@ export function DriverPayments() {
                 </div>
 
                 <div className="ledger-item__right">
-                  <div className={`ledger-item__amount ${item.amount > 0 ? 'credit' : 'debit'}`}>
-                    {item.amount > 0 ? `+${item.amount.toLocaleString('uz-UZ')}` : item.amount.toLocaleString('uz-UZ')} UZS
+                  <div className={`ledger-item__amount ${(item.amount ?? 0) > 0 ? 'credit' : 'debit'}`}>
+                    {(item.amount ?? 0) > 0 ? `+${(item.amount ?? 0).toLocaleString('uz-UZ')}` : (item.amount ?? 0).toLocaleString('uz-UZ')} UZS
                   </div>
                   <div className="ledger-item__balance-after">
-                    Balans: {item.balance_after.toLocaleString('uz-UZ')}
+                    Balans: {((item.balance_after ?? (item as any).balance_after_uzs) ?? 0).toLocaleString('uz-UZ')}
                   </div>
                 </div>
               </div>
@@ -462,7 +491,7 @@ export function DriverPayments() {
         <div className="cashouts-list">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-              Mavjud balans: <strong>{balance?.available_balance.toLocaleString('uz-UZ')} UZS</strong>
+              Mavjud balans: <strong>{(balance?.available_balance ?? 0).toLocaleString('uz-UZ')} UZS</strong>
             </span>
             <button className="btn-cashout-cta" onClick={() => setIsCashoutOpen(true)}>
               <i className="ri-add-line" />
@@ -480,10 +509,10 @@ export function DriverPayments() {
               <div key={req.id} className="cashout-card">
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                    {req.amount.toLocaleString('uz-UZ')} UZS
+                    {((req.amount ?? (req as any).amount_uzs) ?? 0).toLocaleString('uz-UZ')} UZS
                   </div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                    {req.payout_details}
+                    {req.payout_details || (req as any).notes || "Karta / Bank hisobi"}
                   </div>
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.2rem' }}>
                     {formatTime(req.created_at)}
@@ -540,7 +569,7 @@ export function DriverPayments() {
                 <div style={{ fontWeight: 700, fontFamily: 'monospace' }}>{refundTarget.reference_id}</div>
               </div>
               <div className="amount">
-                -{refundTarget.amount.toLocaleString('uz-UZ')} UZS
+                -{((refundTarget.amount ?? (refundTarget as any).amount_uzs) ?? 0).toLocaleString('uz-UZ')} UZS
               </div>
             </div>
 

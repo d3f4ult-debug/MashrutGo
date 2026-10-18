@@ -54,8 +54,8 @@ export const ANDIJON_ROUTES: Record<string, RouteOverview> = {
       { id: 's4', name: 'Navro‘z majmuasi', coordinates: [72.355, 40.776] },
       { id: 's5', name: 'Yangi Bozor bekat', coordinates: [72.361, 40.774] }
     ],
-    activeVehiclesCount: 6,
-    parkedVehiclesCount: 2
+    activeVehiclesCount: 0,
+    parkedVehiclesCount: 0
   },
   '22': {
     routeNumber: '22',
@@ -76,8 +76,8 @@ export const ANDIJON_ROUTES: Record<string, RouteOverview> = {
       { id: 's23', name: 'Mashinasozlik kolleji', coordinates: [72.365, 40.791] },
       { id: 's24', name: 'Bobur Bog‘i asosiy kirish', coordinates: [72.378, 40.795] }
     ],
-    activeVehiclesCount: 4,
-    parkedVehiclesCount: 1
+    activeVehiclesCount: 0,
+    parkedVehiclesCount: 0
   },
   '7': {
     routeNumber: '7',
@@ -98,8 +98,8 @@ export const ANDIJON_ROUTES: Record<string, RouteOverview> = {
       { id: 's73', name: 'Eski Shahar', coordinates: [72.342, 40.782] },
       { id: 's74', name: 'Vokzal', coordinates: [72.348, 40.789] }
     ],
-    activeVehiclesCount: 0, // neutral "no online vehicles visible" case
-    parkedVehiclesCount: 1
+    activeVehiclesCount: 0,
+    parkedVehiclesCount: 0
   },
   '33': {
     routeNumber: '33',
@@ -120,8 +120,8 @@ export const ANDIJON_ROUTES: Record<string, RouteOverview> = {
       { id: 's333', name: 'Teatr maydoni', coordinates: [72.348, 40.785] },
       { id: 's334', name: 'Yangi Bozor', coordinates: [72.361, 40.774] }
     ],
-    activeVehiclesCount: 5,
-    parkedVehiclesCount: 2
+    activeVehiclesCount: 0,
+    parkedVehiclesCount: 0
   }
 }
 
@@ -178,7 +178,7 @@ export async function findItineraries(
       totalWalkingMeters: 380,
       transferCount: 0,
       routeNumbers: ['15'],
-      liveVehiclesCount: 4,
+      liveVehiclesCount: 0,
       departureTime: depTime,
       arrivalTime: addMinutes(now, 19),
       legs: [
@@ -229,7 +229,7 @@ export async function findItineraries(
       totalWalkingMeters: 450,
       transferCount: 0,
       routeNumbers: ['33'],
-      liveVehiclesCount: 3,
+      liveVehiclesCount: 0,
       departureTime: depTime,
       arrivalTime: addMinutes(now, 26),
       legs: [

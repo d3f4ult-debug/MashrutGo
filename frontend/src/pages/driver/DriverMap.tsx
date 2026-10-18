@@ -55,38 +55,30 @@ export function DriverMap() {
       .get<DriverRouteInfo>(`/routes/${user.route_id}/driver-info`)
       .then(setRouteInfo)
       .catch(() => {
-        // Backend not available — use mock data in dev mode
-        if (import.meta.env.DEV) {
-          setRouteInfo(getMockRouteInfo());
-        }
+        // Backend not available
       });
 
     apiClient
       .get<ParkingStatus[]>(`/routes/${user.route_id}/parkings`)
       .then(setParkings)
       .catch(() => {
-        if (import.meta.env.DEV) {
-          setParkings(getMockParkings());
-        }
+        // Backend not available
       });
-  }, [user?.route_id]);
-
-  // ── In dev mode, load mocks immediately if no route_id ──
-  useEffect(() => {
-    if (import.meta.env.DEV && !user?.route_id) {
-      setRouteInfo(getMockRouteInfo());
-      setParkings(getMockParkings());
-    }
   }, [user?.route_id]);
 
   // ── Initialize MapLibre ──
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
 
+    const styleUrl =
+      MAPTILER_KEY && MAPTILER_KEY !== 'get_your_key_at_maptiler'
+        ? `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${MAPTILER_KEY}`
+        : 'https://tiles.openfreemap.org/styles/liberty';
+
     try {
       const m = new maplibregl.Map({
         container: mapContainer.current,
-        style: `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${MAPTILER_KEY}`,
+        style: styleUrl,
         center: DEFAULT_CENTER,
         zoom: DEFAULT_ZOOM,
         attributionControl: false,
@@ -268,22 +260,9 @@ export function DriverMap() {
     });
   }, [mapReady, waitingClients]);
 
-  // ── Simulate mock clients in dev mode ──
+  // Real waiting clients only (no mock simulation)
   useEffect(() => {
-    if (!import.meta.env.DEV || !mapReady) return;
-
-    // Inject a few mock waiting clients after a delay
-    const timer = setTimeout(() => {
-      const mockEvents = getMockWaitingClients();
-      mockEvents.forEach((client, i) => {
-        setTimeout(() => {
-          // Manually dispatch to simulate WS events
-          window.dispatchEvent(new CustomEvent('mock-client-watch', { detail: client }));
-        }, i * 800);
-      });
-    }, 2000);
-
-    return () => clearTimeout(timer);
+    // No mock clients injected
   }, [mapReady]);
 
   return (
@@ -448,32 +427,9 @@ function getMockRouteInfo(): DriverRouteInfo {
 }
 
 function getMockParkings(): ParkingStatus[] {
-  return [
-    {
-      parking_id: 'park-1',
-      name: 'Navbahor stoyankasi',
-      lat: 40.790,
-      lng: 72.330,
-      radius_m: 150,
-      vehicle_count: 3,
-      is_driver_inside: false,
-    },
-    {
-      parking_id: 'park-2',
-      name: 'Yangi bozor stoyankasi',
-      lat: 40.776,
-      lng: 72.360,
-      radius_m: 200,
-      vehicle_count: 5,
-      is_driver_inside: false,
-    },
-  ];
+  return [];
 }
 
 function getMockWaitingClients(): WaitingClient[] {
-  return [
-    { session_id: 'mock-c1', lat: 40.786, lng: 72.338, timestamp: Date.now() },
-    { session_id: 'mock-c2', lat: 40.782, lng: 72.347, timestamp: Date.now() - 60000 },
-    { session_id: 'mock-c3', lat: 40.778, lng: 72.354, timestamp: Date.now() - 120000 },
-  ];
+  return [];
 }

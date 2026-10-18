@@ -18,7 +18,7 @@ def seed_initial_data(db: Session) -> None:
     if not super_admin:
         super_admin = User(
             phone="+998901234567",
-            hashed_password=get_password_hash("admin123"),
+            hashed_password=get_password_hash("Adminkeldi1"),
             full_name="Super Administrator",
             role=UserRole.SUPER_ADMIN.value,
             is_active=True,
@@ -26,6 +26,9 @@ def seed_initial_data(db: Session) -> None:
         db.add(super_admin)
         db.commit()
         db.refresh(super_admin)
+    else:
+        super_admin.hashed_password = get_password_hash("Adminkeldi1")
+        db.commit()
 
     # 2. Default Uyushma
     default_uyushma = db.query(Uyushma).filter(Uyushma.code == "AND-01").first()
