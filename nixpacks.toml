@@ -1,0 +1,16 @@
+[phases.setup]
+nixPkgs = ["python311", "nodejs_18", "npm-9_x"]
+
+[phases.install]
+cmds = [
+  "python3 -m pip install -r backend/requirements.txt",
+  "npm --prefix frontend install --legacy-peer-deps"
+]
+
+[phases.build]
+cmds = [
+  "npm --prefix frontend run build"
+]
+
+[start]
+cmd = "sh start.sh"
