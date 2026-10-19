@@ -57,7 +57,7 @@ class RouteDirectionRead(RouteDirectionBase):
 
 
 class RouteBase(BaseModel):
-    route_number: str = Field(..., min_length=1, max_length=20, examples=["1", "10A", "22"])
+    route_number: str = Field(..., min_length=1, max_length=100, examples=["1", "10A", "22"])
     name: str = Field(..., min_length=2, max_length=150, examples=["Vokzal — Eski Shahar"])
     description: Optional[str] = Field(None, max_length=500)
 

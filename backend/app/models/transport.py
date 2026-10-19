@@ -49,7 +49,7 @@ class Route(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     uyushma_id = Column(Integer, ForeignKey("uyushmas.id", ondelete="CASCADE"), nullable=False, index=True)
-    route_number = Column(String(20), index=True, nullable=False)
+    route_number = Column(String(100), index=True, nullable=False)
     name = Column(String(150), nullable=False)
     description = Column(String(500), nullable=True)
     is_published = Column(Boolean, default=False, nullable=False, index=True)
