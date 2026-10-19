@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useImperativeHandle, forwardRef } from 'react'
+import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react'
 import { hasMapTilerKey, initMap } from '@/services/map/maptiler'
+import MapProviderSwitcher from '@/components/map/MapProviderSwitcher'
 
 type Marker = { id: string; lat: number; lng: number }
 
@@ -9,6 +10,7 @@ interface Props {
   markers?: Marker[]
   onMapClick?: (lng: number, lat: number) => void
   className?: string
+  showProviderSwitcher?: boolean
 }
 
 export type AppMapHandle = {
@@ -17,9 +19,10 @@ export type AppMapHandle = {
 }
 
 const AppMap = forwardRef<AppMapHandle | null, Props & { onMapReady?: (map: any) => void }>(
-  function AppMap({ center = [40.782, 72.342], zoom = 13, markers = [], onMapReady, className = '' }, ref) {
+  function AppMap({ center = [40.782, 72.342], zoom = 13, markers = [], onMapReady, className = '', showProviderSwitcher = true }, ref) {
     const containerRef = useRef<HTMLDivElement | null>(null)
     const mapRef = useRef<any | null>(null)
+    const [mapInstance, setMapInstance] = useState<any | null>(null)
     const hasKey = hasMapTilerKey()
 
     useImperativeHandle(
@@ -58,6 +61,7 @@ const AppMap = forwardRef<AppMapHandle | null, Props & { onMapReady?: (map: any)
       try {
         const map = initMap(el, { center, zoom })
         mapRef.current = map
+        setMapInstance(map)
         if (onMapReadyRef.current) onMapReadyRef.current(map)
       } catch (e) {
         console.warn('Map initialization fallback:', e)
@@ -71,6 +75,7 @@ const AppMap = forwardRef<AppMapHandle | null, Props & { onMapReady?: (map: any)
             // ignore
           }
           mapRef.current = null
+          setMapInstance(null)
         }
       }
     }, [hasKey])
@@ -78,7 +83,14 @@ const AppMap = forwardRef<AppMapHandle | null, Props & { onMapReady?: (map: any)
     return (
       <div className={`w-full h-full relative overflow-hidden bg-neutral-100 ${className}`}>
         {hasKey ? (
-          <div ref={containerRef} className="w-full h-full" />
+          <>
+            <div ref={containerRef} className="w-full h-full" />
+            {showProviderSwitcher && mapInstance && (
+              <div className="absolute top-3 right-12 z-10 pointer-events-auto">
+                <MapProviderSwitcher map={mapInstance} />
+              </div>
+            )}
+          </>
         ) : (
           /* Simulated Andijon Vector Map Canvas fallback */
           <div className="w-full h-full relative flex flex-col items-center justify-center bg-slate-100 select-none">

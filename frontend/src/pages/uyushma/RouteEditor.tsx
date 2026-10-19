@@ -6,6 +6,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { uyushmaApi } from '../../services/api/uyushmaApi';
 import { routeEditorApi } from '../../services/api/routeEditorApi';
 import { fetchRoadSegment } from '../../services/routing/roadRouting';
+import { getSavedMapProvider, setSavedMapProvider, YANDEX_TILES_URL, type MapProvider } from '../../services/map/maptiler';
 import type { RouteDraft } from '../../types/routeEditor';
 import './RouteEditor.css';
 
@@ -82,6 +83,9 @@ export function RouteEditor() {
   // Dirty state
   const [isDirty, setIsDirty] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Map Provider (VirCity vs Yandex)
+  const [mapProvider, setMapProvider] = useState<MapProvider>(() => getSavedMapProvider());
 
   // Active coordinates
   const currentCoords = activeDirection === 'outbound' ? outboundCoords : inboundCoords;
@@ -160,6 +164,25 @@ export function RouteEditor() {
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 
     map.on('load', () => {
+      // 0. Yandex Raster Source & Layer (base layer underneath drawn routes)
+      map.addSource('yandex-raster-source', {
+        type: 'raster',
+        tiles: [YANDEX_TILES_URL],
+        tileSize: 256,
+        attribution: '© Yandex Xarita',
+      });
+
+      map.addLayer({
+        id: 'yandex-raster-layer',
+        type: 'raster',
+        source: 'yandex-raster-source',
+        minzoom: 0,
+        maxzoom: 19,
+        layout: {
+          visibility: getSavedMapProvider() === 'yandex' ? 'visible' : 'none',
+        },
+      });
+
       // 1. Line Source
       map.addSource('paint-route-source', {
         type: 'geojson',
@@ -458,6 +481,25 @@ export function RouteEditor() {
     setToastMessage("Borish yo'nalishi Qaytishga teskari tartibda nusxalandi! 🔄");
   };
 
+  // ── Action: Switch Map Provider ──
+  const handleMapProviderChange = (provider: MapProvider) => {
+    setMapProvider(provider);
+    setSavedMapProvider(provider);
+    const map = mapRef.current;
+    if (map && map.getLayer('yandex-raster-layer')) {
+      map.setLayoutProperty(
+        'yandex-raster-layer',
+        'visibility',
+        provider === 'yandex' ? 'visible' : 'none'
+      );
+    }
+    setToastMessage(
+      provider === 'yandex'
+        ? "Yandex Xarita yoqildi 🗺️"
+        : "VirCity 3D Vektor xaritasi yoqildi 🏙️"
+    );
+  };
+
   // ── Action: Save Draft ──
   const handleSaveDraft = async () => {
     const routeId = id || `rt-${Date.now().toString().slice(-4)}`;
@@ -591,6 +633,28 @@ export function RouteEditor() {
         </div>
 
         <div className="editor-top-bar__actions">
+          {/* Map Provider Selector (VirCity / Yandex) */}
+          <div className="editor-map-provider-toggle">
+            <button
+              type="button"
+              className={`btn-provider-pill ${mapProvider === 'vircity' ? 'active-vircity' : ''}`}
+              onClick={() => handleMapProviderChange('vircity')}
+              title="VirCity 3D Vektor xaritasi"
+            >
+              <i className="ri-building-line" />
+              <span>VirCity (3D)</span>
+            </button>
+            <button
+              type="button"
+              className={`btn-provider-pill ${mapProvider === 'yandex' ? 'active-yandex' : ''}`}
+              onClick={() => handleMapProviderChange('yandex')}
+              title="Yandex Xarita (Yandex Maps)"
+            >
+              <i className="ri-map-2-line" />
+              <span>Yandex</span>
+            </button>
+          </div>
+
           <button className="btn-editor-action btn-save-draft" onClick={handleSaveDraft}>
             <i className="ri-save-3-line" />
             Qoralamani saqlash
@@ -747,6 +811,28 @@ export function RouteEditor() {
 
         {/* Right Map Canvas */}
         <main className="editor-map-canvas">
+          {/* Floating Map Provider Pill on Canvas */}
+          <div className="canvas-map-provider-floating">
+            <button
+              type="button"
+              className={`btn-floating-provider ${mapProvider === 'vircity' ? 'active-vircity' : ''}`}
+              onClick={() => handleMapProviderChange('vircity')}
+              title="VirCity 3D Vektor xaritasi"
+            >
+              <span className={`w-2 h-2 rounded-full ${mapProvider === 'vircity' ? 'bg-cyan-400' : 'bg-slate-400'}`} />
+              <span>VirCity (3D)</span>
+            </button>
+            <button
+              type="button"
+              className={`btn-floating-provider ${mapProvider === 'yandex' ? 'active-yandex' : ''}`}
+              onClick={() => handleMapProviderChange('yandex')}
+              title="Yandex Xarita (Yandex Maps)"
+            >
+              <span className={`w-2 h-2 rounded-full ${mapProvider === 'yandex' ? 'bg-amber-400' : 'bg-slate-400'}`} />
+              <span>Yandex</span>
+            </button>
+          </div>
+
           <div className={`map-floating-instructions ${toolMode !== 'pan' ? 'draw-active' : ''}`}>
             {isRouting ? (
               <>

@@ -1,6 +1,80 @@
 import maplibregl from 'maplibre-gl'
 
 export const VIR_CITY_MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty'
+export const YANDEX_TILES_URL =
+  'https://core-renderer-tiles.maps.yandex.net/tiles?l=map&x={x}&y={y}&z={z}&scale=1&lang=uz_UZ'
+
+export type MapProvider = 'vircity' | 'yandex'
+
+export function getSavedMapProvider(): MapProvider {
+  try {
+    const val = localStorage.getItem('preferred_map_provider')
+    if (val === 'yandex' || val === 'vircity') return val
+  } catch {
+    // ignore
+  }
+  return 'vircity'
+}
+
+export function setSavedMapProvider(provider: MapProvider) {
+  try {
+    localStorage.setItem('preferred_map_provider', provider)
+  } catch {
+    // ignore
+  }
+}
+
+export function attachYandexRaster(map: any, initialProvider?: MapProvider) {
+  if (!map) return
+  const provider = initialProvider || getSavedMapProvider()
+  try {
+    if (!map.getSource('yandex-raster-source')) {
+      map.addSource('yandex-raster-source', {
+        type: 'raster',
+        tiles: [YANDEX_TILES_URL],
+        tileSize: 256,
+        attribution: '© Yandex Xarita'
+      })
+    }
+    if (!map.getLayer('yandex-raster-layer')) {
+      map.addLayer({
+        id: 'yandex-raster-layer',
+        type: 'raster',
+        source: 'yandex-raster-source',
+        minzoom: 0,
+        maxzoom: 19,
+        layout: {
+          visibility: provider === 'yandex' ? 'visible' : 'none'
+        }
+      })
+    }
+  } catch (err) {
+    console.warn('attachYandexRaster error:', err)
+  }
+}
+
+export function switchMapProvider(map: any, provider: MapProvider) {
+  if (!map) return
+  setSavedMapProvider(provider)
+  try {
+    if (map.getLayer('yandex-raster-layer')) {
+      map.setLayoutProperty(
+        'yandex-raster-layer',
+        'visibility',
+        provider === 'yandex' ? 'visible' : 'none'
+      )
+    }
+    if (map.getLayer('3d-buildings')) {
+      map.setLayoutProperty(
+        '3d-buildings',
+        'visibility',
+        provider === 'vircity' ? 'visible' : 'none'
+      )
+    }
+  } catch (err) {
+    console.warn('switchMapProvider error:', err)
+  }
+}
 
 export function getMapTilerKey(): string {
   return import.meta.env.VITE_MAPTILER_API_KEY || ''
@@ -55,6 +129,9 @@ export function initMap(
   // Add 3D building extrusions & lighting once style is loaded (like VirCity 3D)
   map.on('style.load', () => {
     try {
+      // Attach Yandex raster layer for toggling
+      attachYandexRaster(map)
+
       // If 3D buildings layer isn't already present, add fill-extrusion from vector tiles
       if (!map.getLayer('3d-buildings')) {
         const layers = map.getStyle().layers || []

@@ -4,6 +4,8 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLiveFleet } from '../../hooks/useLiveFleet';
 import { VehicleDetailDrawer } from './VehicleDetailDrawer';
+import { attachYandexRaster } from '../../services/map/maptiler';
+import { MapProviderSwitcher } from '../../components/map/MapProviderSwitcher';
 import type { LiveVehicleTelemetry } from '../../types/realtimeFleet';
 import './OperationsLiveMap.css';
 
@@ -74,6 +76,7 @@ export function OperationsLiveMap() {
     m.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'bottom-right');
 
     m.on('load', () => {
+      attachYandexRaster(m);
       map.current = m;
       setMapReady(true);
     });
@@ -254,6 +257,8 @@ export function OperationsLiveMap() {
             {connectionState === 'reconnecting' && 'Qayta ulanmoqda...'}
             {connectionState === 'disconnected' && 'Aloqa yo\'q'}
           </div>
+
+          <MapProviderSwitcher map={map.current} />
         </div>
       </div>
 
