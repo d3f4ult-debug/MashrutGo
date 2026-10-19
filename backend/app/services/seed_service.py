@@ -210,7 +210,7 @@ def seed_initial_data(db: Session) -> None:
             internal_id="AND-101",
             uyushma_id=default_uyushma.id,
             driver_id=driver_profile.id,
-            route_id=route_10.id if route_10 else None,
+            route_id=first_route_id,
             plate_number="60 101 AAA",
             model="Damas",
             capacity=7,
@@ -225,7 +225,7 @@ def seed_initial_data(db: Session) -> None:
         veh_102 = Vehicle(
             internal_id="AND-102",
             uyushma_id=default_uyushma.id,
-            route_id=route_10.id if route_10 else None,
+            route_id=first_route_id,
             plate_number="60 102 AAA",
             model="Damas",
             capacity=7,
