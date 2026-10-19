@@ -131,7 +131,7 @@ export default function Search() {
   // Filter itineraries according to selectedMode
   const filteredItineraries = itineraries.filter((i) => {
     if (selectedMode === 'fastest') return true
-    if (selectedMode === 'cheapest') return i.totalFareSoM <= 2000
+    if (selectedMode === 'cheapest') return i.totalFareSoM <= 8000
     if (selectedMode === 'least_walking') return i.totalWalkingMeters < 500
     if (selectedMode === 'least_transfers') return i.transferCount === 0
     return true

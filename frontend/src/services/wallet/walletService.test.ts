@@ -19,7 +19,7 @@ describe('walletService', () => {
 
     const v2 = walletService.resolveVehicle('15')
     expect(v2).toBeTruthy()
-    expect(v2?.fareSoM).toBe(2000)
+    expect(v2?.fareSoM).toBe(8000)
   })
 
   it('successfully tops up with Click', async () => {

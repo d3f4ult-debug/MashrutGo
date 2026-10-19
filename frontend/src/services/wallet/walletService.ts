@@ -12,35 +12,35 @@ export const REGISTERED_VEHICLES: ResolvedVehicle[] = [
     licensePlate: '60 A 105 AA',
     routeNumber: '15',
     uyushmaName: 'Vodiy Trans Servis MCHJ',
-    fareSoM: 2000,
+    fareSoM: 8000,
   },
   {
     vehicleId: 'v-15-2',
     licensePlate: '60 B 220 BA',
     routeNumber: '15',
     uyushmaName: 'Vodiy Trans Servis MCHJ',
-    fareSoM: 2000,
+    fareSoM: 8000,
   },
   {
     vehicleId: 'v-22-1',
     licensePlate: '60 D 404 DA',
     routeNumber: '22',
     uyushmaName: 'Andijon Yo‘lovchi Tashish DUK',
-    fareSoM: 2000,
+    fareSoM: 8000,
   },
   {
     vehicleId: 'v-33-1',
     licensePlate: '60 F 616 FA',
     routeNumber: '33',
     uyushmaName: 'Oltin Vodiy Ekspress',
-    fareSoM: 2000,
+    fareSoM: 8000,
   },
   {
     vehicleId: 'v-7-1',
     licensePlate: '60 G 707 GA',
     routeNumber: '7',
     uyushmaName: 'Andijon Yo‘lovchi Tashish DUK',
-    fareSoM: 2000,
+    fareSoM: 8000,
   }
 ]
 
@@ -178,7 +178,7 @@ class WalletService {
         licensePlate: `60 A ${Math.floor(100 + Math.random() * 899)} AA`,
         routeNumber: clean,
         uyushmaName: 'Andijon Shahar Yo‘lovchi Tashish DUK',
-        fareSoM: 2000,
+        fareSoM: 8000,
         driverName: 'Haydovchi'
       }
     }

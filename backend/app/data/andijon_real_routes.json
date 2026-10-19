@@ -5804,7 +5804,9 @@
       },
       "distanceKm": 19.3,
       "durationMin": 48
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-shi-4",
@@ -10167,7 +10169,9 @@
       },
       "distanceKm": 17.35,
       "durationMin": 43
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-shi-75",
@@ -15062,7 +15066,9 @@
       },
       "distanceKm": 13.27,
       "durationMin": 33
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-shi-222",
@@ -19097,7 +19103,9 @@
       },
       "distanceKm": 13.96,
       "durationMin": 35
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-7",
@@ -24788,7 +24796,9 @@
       },
       "distanceKm": 18.05,
       "durationMin": 45
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-yt-40",
@@ -26097,7 +26107,9 @@
       "distanceKm": 7.9,
       "durationMin": 13,
       "isDirty": false
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-44",
@@ -27318,7 +27330,9 @@
       "distanceKm": 7.3,
       "durationMin": 11,
       "isDirty": false
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-andijon---asaka",
@@ -30587,7 +30601,9 @@
       "distanceKm": 23.6,
       "durationMin": 27,
       "isDirty": false
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-andijon---shahrixon",
@@ -33696,7 +33712,9 @@
       "distanceKm": 33.2,
       "durationMin": 40,
       "isDirty": false
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-andijon---marhamat",
@@ -37893,7 +37911,9 @@
       "distanceKm": 42.0,
       "durationMin": 53,
       "isDirty": false
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-andijon---qorgontepa",
@@ -42098,7 +42118,9 @@
       "distanceKm": 51.0,
       "durationMin": 68,
       "isDirty": false
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-andijon---dostlik",
@@ -45127,7 +45149,9 @@
       "distanceKm": 37.4,
       "durationMin": 58,
       "isDirty": false
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-11",
@@ -47474,7 +47498,9 @@
       },
       "distanceKm": 7.31,
       "durationMin": 18
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-17",
@@ -52597,7 +52623,9 @@
       },
       "distanceKm": 13.64,
       "durationMin": 34
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-77",
@@ -55804,7 +55832,9 @@
       },
       "distanceKm": 11.5,
       "durationMin": 29
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   },
   {
     "id": "rt-80",
@@ -60243,6 +60273,8 @@
       },
       "distanceKm": 13.89,
       "durationMin": 35
-    }
+    },
+    "fareSoM": 8000,
+    "fare_so_m": 8000
   }
 ]

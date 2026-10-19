@@ -63,7 +63,7 @@ class GraphRouter:
                     .filter(FareRule.uyushma_id == route.uyushma_id, FareRule.is_active.is_(True))
                     .first()
                 )
-            base_fare = fare_rule.base_fare_uzs if fare_rule else 2500
+            base_fare = fare_rule.base_fare_uzs if fare_rule else 8000
 
             # Check if any driver shift is active for this route
             active_shift = (

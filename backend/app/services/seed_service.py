@@ -127,12 +127,12 @@ def seed_initial_data(db: Session) -> None:
                 if first_route_id is None:
                     first_route_id = new_route.id
 
-                # Fare rule
+                # Fare rule: Fixed 8,000 UZS for all rides
                 fare_rule = FareRule(
                     uyushma_id=default_uyushma.id,
                     route_id=new_route.id,
                     rule_type="fixed",
-                    base_fare_uzs=3000 if r_data.get("type") == "suburban" else 2000,
+                    base_fare_uzs=8000,
                     is_active=True,
                 )
                 db.add(fare_rule)
@@ -243,6 +243,19 @@ def seed_initial_data(db: Session) -> None:
                             duration_seconds=int(inbound_data["durationMin"] * 60),
                         )
                         db.add(dir_in)
+                # Update existing route fare rule to fixed 8,000 UZS
+                fare_rule = db.query(FareRule).filter(FareRule.route_id == existing.id).first()
+                if fare_rule:
+                    fare_rule.base_fare_uzs = 8000
+                else:
+                    fare_rule = FareRule(
+                        uyushma_id=default_uyushma.id,
+                        route_id=existing.id,
+                        rule_type="fixed",
+                        base_fare_uzs=8000,
+                        is_active=True,
+                    )
+                    db.add(fare_rule)
                 db.commit()
             if first_route_id is None:
                 first_route_id = existing.id if existing else new_route.id
