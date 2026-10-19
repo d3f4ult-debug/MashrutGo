@@ -47,3 +47,9 @@ class VerifyOtpRequest(BaseModel):
     phone: str = Field(..., examples=["+998901234567"])
     code: str = Field(..., min_length=4, max_length=6, examples=["1234"])
 
+
+class LoginOtpRequest(BaseModel):
+    phone: str = Field(..., examples=["+998901234567"])
+    code: str = Field(..., min_length=4, max_length=6, examples=["1234"])
+    full_name: Optional[str] = Field(None, examples=["Alisher Navoiy"])
+

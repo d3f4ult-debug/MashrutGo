@@ -62,25 +62,9 @@ export default function ClientLayout() {
             <Link to="/wallet" className={`hover:text-blue-600 transition-colors ${location.pathname === '/wallet' ? 'text-blue-600 font-bold' : ''}`}>
               {uz.nav.wallet}
             </Link>
-            <Link
-              to="/routes/editor"
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 font-semibold text-xs transition-colors"
-              title="Yangi marshrut chizish va qo'shish (Uyushmasiz ochiq muharrir)"
-            >
-              <i className="ri-pencil-ruler-2-line text-sm"></i>
-              <span>Marshrut chizish</span>
-            </Link>
           </nav>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <Link
-              to="/routes/editor"
-              className="md:hidden inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-semibold"
-              title="Marshrut chizish"
-            >
-              <i className="ri-pencil-ruler-2-line"></i>
-              <span className="text-[11px]">Chizish</span>
-            </Link>
             <HeaderAuthControls />
           </div>
         </div>

@@ -350,15 +350,6 @@ export default function Search() {
                 <span>№ {rt.num}</span>
               </button>
             ))}
-            <button
-              type="button"
-              onClick={() => navigate('/routes/editor')}
-              className="px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs flex items-center gap-1 shrink-0 ml-auto transition-colors"
-              title="Yangi marshrut yaratish va xaritada chizish"
-            >
-              <i className="ri-pencil-ruler-2-line"></i>
-              <span>+ Yangi chizish</span>
-            </button>
           </div>
         </form>
       </section>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useAuth as useSystemAuth } from '../../contexts/AuthContext';
 import { useAuth as useClientAuth } from '../../services/auth/AuthProvider';
@@ -31,7 +32,7 @@ export function WelcomeRoleModal({ isOpen, onClose, defaultRole }: Props) {
   const { signin: clientSignin } = useClientAuth();
 
   // Screen selection: 'selector' | 'client_auth' | 'driver_auth' | 'admin_auth'
-  const [activeScreen, setActiveScreen] = useState<'selector' | 'client_auth' | 'driver_auth' | 'admin_auth'>('selector');
+  const [activeScreen, setActiveScreen] = useState<'selector' | 'client_auth' | 'driver_auth' | 'admin_auth'>('client_auth');
 
   // Sub-tabs for passenger/driver: 'login' | 'register'
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -59,14 +60,14 @@ export function WelcomeRoleModal({ isOpen, onClose, defaultRole }: Props) {
 
   // Sync defaultRole if opened with one
   useEffect(() => {
-    if (defaultRole === 'client') {
-      setActiveScreen('client_auth');
-    } else if (defaultRole === 'driver') {
+    if (defaultRole === 'driver') {
       setActiveScreen('driver_auth');
     } else if (defaultRole === 'admin' || defaultRole === 'uyushma') {
       setActiveScreen('admin_auth');
+    } else if (defaultRole === 'client') {
+      setActiveScreen('client_auth');
     } else {
-      setActiveScreen('selector');
+      setActiveScreen('client_auth');
     }
   }, [defaultRole, isOpen]);
 
@@ -155,110 +156,36 @@ export function WelcomeRoleModal({ isOpen, onClose, defaultRole }: Props) {
     const cleanPhone = '+998' + phone.replace(/\D/g, '').slice(3);
 
     try {
-      // Verify OTP with backend
-      const vRes = await fetch(`${API_BASE}/auth/verify-otp`, {
+      // Direct real OTP authentication/registration via DevSMS-verified endpoint
+      const res = await fetch(`${API_BASE}/auth/login-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: cleanPhone, code: smsCode.trim() }),
+        body: JSON.stringify({
+          phone: cleanPhone,
+          code: smsCode.trim(),
+          full_name: fullName.trim() || undefined,
+        }),
       });
 
-      if (!vRes.ok) {
-        const vData = await vRes.json().catch(() => ({}));
-        setError(vData.detail || 'Tasdiqlash kodi noto‘g‘ri!');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.detail || 'Tasdiqlash kodi noto‘g‘ri!');
         setLoading(false);
         return;
       }
-      if (authMode === 'register') {
-        const regRes = await fetch(`${API_BASE}/auth/register-client`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            phone: cleanPhone,
-            password: 'client-user-123',
-            full_name: fullName.trim() || 'Yo‘lovchi',
-            preferred_language: 'uz',
-          }),
-        });
 
-        if (regRes.ok) {
-          const data = await regRes.json();
-          localStorage.setItem('auth_token', data.access_token);
-          localStorage.setItem('auth_user', JSON.stringify(data.user));
-          localStorage.setItem('mashrutgo_wallet_balance', '0');
-          clientSignin({
-            id: String(data.user.id),
-            name: data.user.full_name,
-            roles: ['client'],
-          });
-          onClose();
-          navigate('/');
-          return;
-        } else {
-          // If already exists, attempt login directly
-          const err = await regRes.json().catch(() => ({}));
-          if (err.detail && typeof err.detail === 'string' && err.detail.toLowerCase().includes('allaqachon')) {
-            // User exists, try login
-          } else {
-            setError(err.detail || 'Ro‘yxatdan o‘tishda xatolik yuz berdi');
-            setLoading(false);
-            return;
-          }
-        }
-      }
-
-      // Login
-      const loginRes = await fetch(`${API_BASE}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: cleanPhone, password: 'client-user-123' }),
-      });
-
-      if (loginRes.ok) {
-        const data = await loginRes.json();
-        localStorage.setItem('auth_token', data.access_token);
-        localStorage.setItem('auth_user', JSON.stringify(data.user));
-        clientSignin({
-          id: String(data.user.id),
-          name: data.user.full_name,
-          roles: ['client'],
-        });
-        onClose();
-        navigate('/');
-      } else {
-        // Fallback demo user
-        const mockUser = {
-          id: `client-${Date.now().toString().slice(-4)}`,
-          phone: cleanPhone,
-          full_name: fullName.trim() || 'Yo‘lovchi',
-          role: 'client',
-        };
-        localStorage.setItem('auth_token', 'token_client');
-        localStorage.setItem('auth_user', JSON.stringify(mockUser));
-        clientSignin({
-          id: mockUser.id,
-          name: mockUser.full_name,
-          roles: ['client'],
-        });
-        onClose();
-        navigate('/');
-      }
-    } catch {
-      // Offline fallback
-      const mockUser = {
-        id: `client-${Date.now().toString().slice(-4)}`,
-        phone: cleanPhone,
-        full_name: fullName.trim() || 'Yo‘lovchi',
-        role: 'client',
-      };
-      localStorage.setItem('auth_token', 'token_client');
-      localStorage.setItem('auth_user', JSON.stringify(mockUser));
+      localStorage.setItem('auth_token', data.access_token);
+      localStorage.setItem('auth_user', JSON.stringify(data.user));
+      localStorage.setItem('mashrutgo_wallet_balance', '0');
       clientSignin({
-        id: mockUser.id,
-        name: mockUser.full_name,
+        id: String(data.user.id),
+        name: data.user.full_name,
         roles: ['client'],
       });
       onClose();
-      navigate('/');
+      window.location.reload();
+    } catch (err: any) {
+      setError(err?.message || 'Tarmoqqa ulanishda xatolik yuz berdi');
     } finally {
       setLoading(false);
     }
@@ -414,11 +341,11 @@ export function WelcomeRoleModal({ isOpen, onClose, defaultRole }: Props) {
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-fadeIn">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden relative">
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-fadeIn overflow-y-auto">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden relative my-auto max-h-[90vh] flex flex-col">
         {/* Top Header */}
-        <div className="p-6 pb-4 bg-gradient-to-br from-slate-900 via-indigo-950 to-blue-900 text-white relative">
+        <div className="p-6 pb-4 bg-gradient-to-br from-slate-900 via-indigo-950 to-blue-900 text-white relative shrink-0">
           <button
             onClick={onClose}
             className="absolute top-5 right-5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white flex items-center justify-center transition-colors"
@@ -458,7 +385,7 @@ export function WelcomeRoleModal({ isOpen, onClose, defaultRole }: Props) {
         </div>
 
         {/* Modal Body */}
-        <div className="p-6">
+        <div className="p-6 overflow-y-auto flex-1">
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-600 flex items-center gap-2">
               <i className="ri-error-warning-fill text-base shrink-0" />
@@ -615,7 +542,7 @@ export function WelcomeRoleModal({ isOpen, onClose, defaultRole }: Props) {
                     disabled={loading}
                     className="w-full mt-2 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm transition-colors flex items-center justify-center gap-2 shadow-sm"
                   >
-                    {loading ? 'Yuborilmoqda...' : 'SMS Kod olish (OTP: 1234)'}
+                    {loading ? 'Yuborilmoqda...' : 'SMS kod olish'}
                   </button>
                 </form>
               ) : (
@@ -629,12 +556,11 @@ export function WelcomeRoleModal({ isOpen, onClose, defaultRole }: Props) {
                       maxLength={4}
                       value={smsCode}
                       onChange={e => setSmsCode(e.target.value)}
-                      placeholder="1234"
+                      placeholder="____"
                       autoFocus
                       className="w-48 mx-auto text-center tracking-widest text-2xl font-bold py-2.5 border-2 border-blue-500 rounded-xl focus:outline-none"
                       required
                     />
-                    <div className="mt-2 text-xs text-blue-600">Sinov kodi: <strong>1234</strong></div>
                   </div>
 
                   <button
@@ -646,6 +572,21 @@ export function WelcomeRoleModal({ isOpen, onClose, defaultRole }: Props) {
                   </button>
                 </form>
               )}
+
+              <div className="pt-4 border-t border-slate-100 mt-4 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveScreen('selector');
+                    resetForm();
+                  }}
+                  className="text-xs text-slate-500 hover:text-blue-600 transition-colors font-medium inline-flex items-center gap-1"
+                >
+                  <i className="ri-steering-2-line text-slate-400" />
+                  <span>Haydovchi yoki Boshqaruv xodimisizmi?</span>
+                  <i className="ri-arrow-right-s-line text-sm" />
+                </button>
+              </div>
             </div>
           )}
 
@@ -780,7 +721,7 @@ export function WelcomeRoleModal({ isOpen, onClose, defaultRole }: Props) {
                     disabled={loading}
                     className="w-full mt-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm transition-colors flex items-center justify-center gap-2 shadow-sm"
                   >
-                    {loading ? 'Yuborilmoqda...' : 'SMS Kod olish (OTP: 1234)'}
+                    {loading ? 'Yuborilmoqda...' : 'SMS kod olish'}
                   </button>
                 </form>
               ) : (
@@ -794,12 +735,11 @@ export function WelcomeRoleModal({ isOpen, onClose, defaultRole }: Props) {
                       maxLength={4}
                       value={smsCode}
                       onChange={e => setSmsCode(e.target.value)}
-                      placeholder="1234"
+                      placeholder="____"
                       autoFocus
                       className="w-48 mx-auto text-center tracking-widest text-2xl font-bold py-2.5 border-2 border-emerald-500 rounded-xl focus:outline-none"
                       required
                     />
-                    <div className="mt-2 text-xs text-emerald-600">Sinov kodi: <strong>1234</strong></div>
                   </div>
 
                   <button
@@ -869,6 +809,7 @@ export function WelcomeRoleModal({ isOpen, onClose, defaultRole }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

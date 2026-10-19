@@ -21,9 +21,9 @@ export default function HeaderAuthControls() {
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors shadow-xs"
         >
           <i className="ri-user-line" />
-          Kirish / Tanlov
+          Kirish
         </button>
-        <WelcomeRoleModal isOpen={modalOpen} onClose={() => setModalOpen(false)} />
+        <WelcomeRoleModal isOpen={modalOpen} onClose={() => setModalOpen(false)} defaultRole="client" />
       </>
     )
   }

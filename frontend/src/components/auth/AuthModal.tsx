@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useAuth } from '@/services/auth/AuthProvider'
 import { API_BASE } from '@/services/api/client'
 import { uz } from '@/locales/uz'
@@ -94,95 +95,44 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: Props) {
     const cleanPhone = '+998' + phone.replace(/\D/g, '').slice(3)
 
     try {
-      const vRes = await fetch(`${API_BASE}/auth/verify-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: cleanPhone, code: smsCode.trim() }),
-      })
-
-      if (!vRes.ok) {
-        const vData = await vRes.json().catch(() => ({}))
-        setError(vData.detail || 'Tasdiqlash kodi noto‘g‘ri!')
-        setLoading(false)
-        return
-      }
-      // 1. First attempt to login directly with phone
-      const loginRes = await fetch(`${API_BASE}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: cleanPhone, password: 'client-user-123' })
-      })
-
-      if (loginRes.ok) {
-        const data = await loginRes.json()
-        localStorage.setItem('auth_token', data.access_token)
-        localStorage.setItem('auth_user', JSON.stringify(data.user))
-        localStorage.setItem('mashrutgo_wallet_balance', '0')
-        localStorage.setItem('mashrutgo_wallet_transactions', '[]')
-        signin({
-          id: String(data.user.id),
-          name: data.user.full_name || fullName.trim(),
-          roles: [data.user.role || 'client']
-        })
-        onSuccess?.()
-        onClose()
-        return
-      }
-
-      // 2. If user doesn't exist yet, register new real client in backend
-      const regRes = await fetch(`${API_BASE}/auth/register-client`, {
+      const res = await fetch(`${API_BASE}/auth/login-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           phone: cleanPhone,
-          password: 'client-user-123',
-          full_name: fullName.trim() || 'Yo‘lovchi',
-          preferred_language: 'uz'
-        })
+          code: smsCode.trim(),
+          full_name: fullName.trim() || undefined,
+        }),
       })
 
-      if (regRes.ok) {
-        const data = await regRes.json()
-        localStorage.setItem('auth_token', data.access_token)
-        localStorage.setItem('auth_user', JSON.stringify(data.user))
-        localStorage.setItem('mashrutgo_wallet_balance', '0')
-        localStorage.setItem('mashrutgo_wallet_transactions', '[]')
-        signin({
-          id: String(data.user.id),
-          name: data.user.full_name,
-          roles: ['client']
-        })
-        onSuccess?.()
-        onClose()
-      } else {
-        const errData = await regRes.json().catch(() => ({}))
-        setError(errData.detail || 'Avtorizatsiyada xatolik yuz berdi')
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setError(data.detail || 'Tasdiqlash kodi noto‘g‘ri!')
+        setLoading(false)
+        return
       }
-    } catch {
-      // Offline fallback with exact entered client data
-      const clientUser = {
-        id: `client-${Date.now()}`,
-        name: fullName.trim() || 'Yo‘lovchi',
-        roles: ['client']
-      }
-      localStorage.setItem('auth_token', 'client_token')
-      localStorage.setItem('auth_user', JSON.stringify({
-        id: clientUser.id,
-        phone: cleanPhone,
-        full_name: clientUser.name,
-        role: 'client'
-      }))
-      signin(clientUser)
+
+      localStorage.setItem('auth_token', data.access_token)
+      localStorage.setItem('auth_user', JSON.stringify(data.user))
+      localStorage.setItem('mashrutgo_wallet_balance', '0')
+      localStorage.setItem('mashrutgo_wallet_transactions', '[]')
+      signin({
+        id: String(data.user.id),
+        name: data.user.full_name || fullName.trim() || 'Yo‘lovchi',
+        roles: [data.user.role || 'client']
+      })
       onSuccess?.()
       onClose()
+    } catch (err: any) {
+      setError(err?.message || 'Tarmoqqa ulanishda xatolik yuz berdi')
     } finally {
       setLoading(false)
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl overflow-hidden border border-neutral-100 p-6 space-y-4">
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fadeIn overflow-y-auto">
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl overflow-hidden border border-neutral-100 p-6 space-y-4 my-auto max-h-[90vh]">
         <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
           <div>
             <h3 className="text-lg font-bold text-neutral-900">
@@ -286,15 +236,11 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: Props) {
                 maxLength={4}
                 value={smsCode}
                 onChange={(e) => setSmsCode(e.target.value)}
-                placeholder="1234"
+                placeholder="____"
                 className="w-full text-center tracking-widest text-xl font-bold py-2.5 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 autoFocus
                 required
               />
-              <div className="p-2 bg-blue-50 border border-blue-100 rounded-lg text-[11px] text-blue-700 mt-2 text-center">
-                <i className="ri-information-line mr-1"></i>
-                Hozirgi test tasdiqlash kodi: <strong>1234</strong>
-              </div>
             </div>
 
             <button
@@ -307,6 +253,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: Props) {
           </form>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

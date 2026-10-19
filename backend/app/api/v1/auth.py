@@ -17,6 +17,7 @@ from app.schemas.auth import (
     DriverRegisterRequest,
     SendOtpRequest,
     VerifyOtpRequest,
+    LoginOtpRequest,
 )
 from app.schemas.user import UserRead
 from app.services.audit_service import log_audit_event
@@ -45,29 +46,42 @@ _active_otps: dict = {}
 
 @router.post("/send-otp")
 async def send_otp(payload: SendOtpRequest):
-    """Send SMS verification code using DevSMS.uz universal OTP."""
+    """Send real SMS verification code using DevSMS.uz universal OTP."""
     phone_clean = payload.phone.strip()
     digits = "".join(filter(str.isdigit, phone_clean))
     if len(digits) < 9:
         raise HTTPException(status_code=400, detail="Telefon raqami noto‘g‘ri kiritildi")
 
-    # Generate 4-digit code
+    # Format phone number for DevSMS (998901234567)
+    if digits.startswith("998") and len(digits) == 12:
+        clean_phone = digits
+    elif len(digits) == 9:
+        clean_phone = f"998{digits}"
+    else:
+        clean_phone = digits
+
+    # Generate real 4-digit code
     code = f"{random.randint(1000, 9999)}"
 
     # Determine template type: 3 for signup, 4 for signin
     template_type = 3 if payload.purpose == "signup" else 4
 
     try:
-        res = await devsms_service.send_otp(phone=digits, code=code, template_type=template_type)
+        res = await devsms_service.send_otp(phone=clean_phone, code=code, template_type=template_type)
         if not res.get("success"):
-            # Fallback to local OTP storage so user is not blocked
-            pass
+            err_msg = res.get("message") or "SMS provayderida xatolik yuz berdi"
+            raise HTTPException(status_code=400, detail=f"SMS yuborilmadi: {err_msg}")
+    except HTTPException:
+        raise
     except Exception as e:
-        # Fallback
-        pass
+        raise HTTPException(status_code=502, detail=f"DevSMS xizmati bilan ulanishda xatolik: {str(e)}")
 
     # Store code for 5 minutes
-    _active_otps[digits] = {
+    _active_otps[clean_phone] = {
+        "code": code,
+        "expires_at": time.time() + 300,
+    }
+    _active_otps[clean_phone[-9:]] = {
         "code": code,
         "expires_at": time.time() + 300,
     }
@@ -75,9 +89,7 @@ async def send_otp(payload: SendOtpRequest):
     return {
         "success": True,
         "message": "SMS tasdiqlash kodi yuborildi",
-        "phone": digits,
-        # In development/test mode, also return the code to simplify testing if SMS fails
-        "test_code": code,
+        "phone": clean_phone,
     }
 
 
@@ -87,16 +99,13 @@ def verify_otp(payload: VerifyOtpRequest):
     phone_clean = payload.phone.strip()
     digits = "".join(filter(str.isdigit, phone_clean))
 
-    # Allow universal fallback code '1234' or exact generated code
-    if payload.code.strip() == "1234":
-        return {"success": True, "message": "Tasdiqlandi"}
-
-    record = _active_otps.get(digits)
+    record = _active_otps.get(digits) or _active_otps.get(digits[-9:])
     if not record:
         raise HTTPException(status_code=400, detail="SMS kodi eskirgan yoki so‘ralmagan. Qaytadan kod oling.")
 
     if time.time() > record["expires_at"]:
         _active_otps.pop(digits, None)
+        _active_otps.pop(digits[-9:], None)
         raise HTTPException(status_code=400, detail="SMS kodi muddati tugagan. Qaytadan kod oling.")
 
     if record["code"] != payload.code.strip():
@@ -104,7 +113,93 @@ def verify_otp(payload: VerifyOtpRequest):
 
     # Cleanup used code
     _active_otps.pop(digits, None)
+    _active_otps.pop(digits[-9:], None)
     return {"success": True, "message": "Tasdiqlandi"}
+
+
+@router.post("/login-otp", response_model=TokenResponse)
+def login_otp(
+    payload: LoginOtpRequest,
+    db: Session = Depends(get_db_dep),
+):
+    """Verify submitted SMS OTP and authenticate/register client directly."""
+    phone_clean = payload.phone.strip()
+    digits = "".join(filter(str.isdigit, phone_clean))
+    if len(digits) < 9:
+        raise HTTPException(status_code=400, detail="Telefon raqami noto‘g‘ri kiritildi")
+
+    record = _active_otps.get(digits) or _active_otps.get(digits[-9:])
+    if not record:
+        raise HTTPException(status_code=400, detail="SMS kodi eskirgan yoki so‘ralmagan. Qaytadan kod oling.")
+
+    if time.time() > record["expires_at"]:
+        _active_otps.pop(digits, None)
+        _active_otps.pop(digits[-9:], None)
+        raise HTTPException(status_code=400, detail="SMS kodi muddati tugagan. Qaytadan kod oling.")
+
+    if record["code"] != payload.code.strip():
+        raise HTTPException(status_code=400, detail="Kiritilgan kod noto‘g‘ri!")
+
+    # Cleanup code
+    _active_otps.pop(digits, None)
+    _active_otps.pop(digits[-9:], None)
+
+    # Standardize DB phone format
+    db_phone = f"+998{digits[-9:]}"
+    user = db.query(User).filter(User.phone == db_phone).first()
+
+    if not user:
+        # Create client user automatically
+        user = User(
+            phone=db_phone,
+            hashed_password=get_password_hash("client-otp-verified"),
+            full_name=payload.full_name or "Yo‘lovchi",
+            role=UserRole.CLIENT.value,
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        client_profile = ClientProfile(
+            user_id=user.id,
+            preferred_language="uz",
+        )
+        db.add(client_profile)
+
+        # Create wallet with initial 0 UZS
+        wallet = Wallet(user_id=user.id, balance_uzs=0)
+        db.add(wallet)
+        db.commit()
+        db.refresh(user)
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Foydalanuvchi akkaunti faol emas",
+        )
+
+    access_token = create_access_token(
+        subject=user.id,
+        role=user.role,
+        uyushma_id=user.uyushma_id,
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
+    )
+
+    log_audit_event(
+        db=db,
+        action="user.login_otp",
+        actor_user_id=user.id,
+        actor_role=user.role,
+        target_type="user",
+        target_id=str(user.id),
+    )
+
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=build_user_read(user),
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
