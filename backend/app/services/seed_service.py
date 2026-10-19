@@ -195,6 +195,21 @@ def seed_initial_data(db: Session) -> None:
                         dir_out.polyline = json.dumps(outbound_data["geometry"])
                         dir_out.distance_meters = int(outbound_data["distanceKm"] * 1000)
                         dir_out.duration_seconds = int(outbound_data["durationMin"] * 60)
+                    else:
+                        dir_out = RouteDirection(
+                            route_id=existing.id,
+                            direction_type="outbound",
+                            origin_name=outbound_data["startPoint"]["name"],
+                            destination_name=outbound_data["endPoint"]["name"],
+                            origin_lat=out_coords[0][1],
+                            origin_lng=out_coords[0][0],
+                            destination_lat=out_coords[-1][1],
+                            destination_lng=out_coords[-1][0],
+                            polyline=json.dumps(outbound_data["geometry"]),
+                            distance_meters=int(outbound_data["distanceKm"] * 1000),
+                            duration_seconds=int(outbound_data["durationMin"] * 60),
+                        )
+                        db.add(dir_out)
                 inbound_data = r_data.get("inbound")
                 if inbound_data and inbound_data.get("geometry"):
                     in_coords = inbound_data["geometry"]["coordinates"]
@@ -213,6 +228,21 @@ def seed_initial_data(db: Session) -> None:
                         dir_in.polyline = json.dumps(inbound_data["geometry"])
                         dir_in.distance_meters = int(inbound_data["distanceKm"] * 1000)
                         dir_in.duration_seconds = int(inbound_data["durationMin"] * 60)
+                    else:
+                        dir_in = RouteDirection(
+                            route_id=existing.id,
+                            direction_type="inbound",
+                            origin_name=inbound_data["startPoint"]["name"],
+                            destination_name=inbound_data["endPoint"]["name"],
+                            origin_lat=in_coords[0][1],
+                            origin_lng=in_coords[0][0],
+                            destination_lat=in_coords[-1][1],
+                            destination_lng=in_coords[-1][0],
+                            polyline=json.dumps(inbound_data["geometry"]),
+                            distance_meters=int(inbound_data["distanceKm"] * 1000),
+                            duration_seconds=int(inbound_data["durationMin"] * 60),
+                        )
+                        db.add(dir_in)
                 db.commit()
             if first_route_id is None:
                 first_route_id = existing.id if existing else new_route.id
