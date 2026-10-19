@@ -7,11 +7,31 @@ import { uyushmaApi } from '../../services/api/uyushmaApi';
 import { routeEditorApi } from '../../services/api/routeEditorApi';
 import { fetchRoadSegment } from '../../services/routing/roadRouting';
 import { getSavedMapProvider, setSavedMapProvider, YANDEX_TILES_URL, type MapProvider } from '../../services/map/maptiler';
+import { geocode, type GeocodeResult, type GeocodeCategory } from '../../services/map/geocode';
 import type { RouteDraft } from '../../types/routeEditor';
 import './RouteEditor.css';
 
 const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY || 'get_your_key_at_maptiler';
 const ANDIJON_CENTER: [number, number] = [72.344, 40.783];
+
+function getCategoryIcon(category?: GeocodeCategory): string {
+  switch (category) {
+    case 'market':
+      return 'ri-store-2-line';
+    case 'station':
+      return 'ri-bus-wifi-line';
+    case 'hospital':
+      return 'ri-hospital-line';
+    case 'education':
+      return 'ri-government-line';
+    case 'neighborhood':
+      return 'ri-community-line';
+    case 'street':
+      return 'ri-road-map-line';
+    default:
+      return 'ri-map-pin-line';
+  }
+}
 
 // Helper: Haversine distance in km
 function calculateHaversineKm(coords: [number, number][]): number {
@@ -87,6 +107,14 @@ export function RouteEditor() {
   // Map Provider (VirCity vs Yandex)
   const [mapProvider, setMapProvider] = useState<MapProvider>(() => getSavedMapProvider());
 
+  // Search state for finding locations across Andijon
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const searchMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+
   // Active coordinates
   const currentCoords = activeDirection === 'outbound' ? outboundCoords : inboundCoords;
   const setCurrentCoords = activeDirection === 'outbound' ? setOutboundCoords : setInboundCoords;
@@ -142,6 +170,45 @@ export function RouteEditor() {
   const recordHistory = useCallback((coords: [number, number][]) => {
     setCurrentHistory(prev => [...prev.slice(-25), [...coords]]);
   }, [setCurrentHistory]);
+
+  // ── Debounced Search Effect ──
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setIsSearching(true);
+      geocode(q)
+        .then(res => {
+          setSearchResults(res);
+          setIsSearching(false);
+          setIsSearchOpen(true);
+        })
+        .catch(() => {
+          setIsSearching(false);
+        });
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // ── Close search dropdown when clicking outside ──
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(e.target as Node)
+      ) {
+        setIsSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // ── Initialize MapLibre ──
   useEffect(() => {
@@ -254,6 +321,10 @@ export function RouteEditor() {
     mapRef.current = map;
 
     return () => {
+      if (searchMarkerRef.current) {
+        searchMarkerRef.current.remove();
+        searchMarkerRef.current = null;
+      }
       map.remove();
       mapRef.current = null;
     };
@@ -498,6 +569,67 @@ export function RouteEditor() {
         ? "Yandex Xarita yoqildi 🗺️"
         : "VirCity 3D Vektor xaritasi yoqildi 🏙️"
     );
+  };
+
+  // ── Action: Select Location from Search ──
+  const handleSelectSearchResult = (result: GeocodeResult, action: 'fly' | 'add') => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Smoothly fly to searched destination
+    map.flyTo({
+      center: result.center,
+      zoom: 16,
+      duration: 1200,
+    });
+
+    // Remove previous search pin
+    if (searchMarkerRef.current) {
+      searchMarkerRef.current.remove();
+      searchMarkerRef.current = null;
+    }
+
+    // Create custom pin for search result
+    const el = document.createElement('div');
+    el.className = 'search-pulse-pin';
+    el.innerHTML = `
+      <div class="search-pin-inner">
+        <i class="ri-map-pin-2-fill"></i>
+      </div>
+      <div class="search-pin-label">${result.name}</div>
+    `;
+    const marker = new maplibregl.Marker({ element: el })
+      .setLngLat(result.center)
+      .addTo(map);
+    searchMarkerRef.current = marker;
+
+    if (action === 'add') {
+      if (currentCoords.length === 0) {
+        recordHistory([result.center]);
+        setCurrentCoords([result.center]);
+        setIsDirty(true);
+        setToastMessage(`"${result.name}" marshrut boshlanish nuqtasi sifatida belgilandi 📍`);
+      } else {
+        const last = currentCoords[currentCoords.length - 1];
+        fetchRoadSegment(last, result.center)
+          .then(seg => {
+            recordHistory(currentCoords);
+            setCurrentCoords(prev => [...prev, ...seg]);
+            setIsDirty(true);
+            setToastMessage(`"${result.name}" yo'llar bo'ylab marshrutga ulandi! 🛣️`);
+          })
+          .catch(() => {
+            recordHistory(currentCoords);
+            setCurrentCoords(prev => [...prev, result.center]);
+            setIsDirty(true);
+            setToastMessage(`"${result.name}" marshrutga qo'shildi 📍`);
+          });
+      }
+    } else {
+      setToastMessage(`Xarita "${result.name}"ga yo'naltirildi 🎯`);
+    }
+
+    setIsSearchOpen(false);
   };
 
   // ── Action: Save Draft ──
@@ -811,6 +943,84 @@ export function RouteEditor() {
 
         {/* Right Map Canvas */}
         <main className="editor-map-canvas">
+          {/* Floating Search Bar on Canvas */}
+          <div className="canvas-search-box" ref={searchContainerRef}>
+            <div className="canvas-search-input-wrapper">
+              <i className="ri-search-line search-icon" />
+              <input
+                type="text"
+                className="canvas-search-input"
+                placeholder="Andijon bo'ylab manzil yoki joyni qidirish..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                onFocus={() => {
+                  if (searchResults.length > 0) setIsSearchOpen(true);
+                }}
+              />
+              {isSearching && (
+                <i className="ri-loader-4-line ri-spin search-spinner" />
+              )}
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="btn-clear-search"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSearchResults([]);
+                    setIsSearchOpen(false);
+                    if (searchMarkerRef.current) {
+                      searchMarkerRef.current.remove();
+                      searchMarkerRef.current = null;
+                    }
+                  }}
+                  title="Tozalash"
+                >
+                  <i className="ri-close-line" />
+                </button>
+              )}
+            </div>
+
+            {/* Dropdown Results */}
+            {isSearchOpen && searchResults.length > 0 && (
+              <div className="canvas-search-dropdown">
+                <div className="search-dropdown-header">
+                  <span>Topilgan joylar ({searchResults.length})</span>
+                  <small>Bosing — xarita boradi yoki marshrutga ulanadi</small>
+                </div>
+                <ul className="search-results-list">
+                  {searchResults.map(item => (
+                    <li key={item.id} className="search-result-row">
+                      <div
+                        className="search-result-main"
+                        onClick={() => handleSelectSearchResult(item, 'fly')}
+                        title="Xaritada ushbu joyga borish"
+                      >
+                        <div className="search-result-icon">
+                          <i className={getCategoryIcon(item.category)} />
+                        </div>
+                        <div className="search-result-info">
+                          <strong className="search-result-name">{item.name}</strong>
+                          {item.address && (
+                            <span className="search-result-address">{item.address}</span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-add-to-route"
+                        onClick={() => handleSelectSearchResult(item, 'add')}
+                        title="Ushbu nuqtani chizilayotgan marshrutga yo'llar bo'ylab ulash"
+                      >
+                        <i className="ri-add-line" />
+                        <span>Qo'shish</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
           {/* Floating Map Provider Pill on Canvas */}
           <div className="canvas-map-provider-floating">
             <button
