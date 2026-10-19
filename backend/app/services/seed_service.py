@@ -173,8 +173,49 @@ def seed_initial_data(db: Session) -> None:
                 )
                 db.add(dir_in)
                 db.commit()
-            elif first_route_id is None:
-                first_route_id = existing.id
+            else:
+                existing.name = r_data["route_name"]
+                existing.description = r_data["description"]
+                existing.is_published = True
+                outbound_data = r_data.get("outbound")
+                if outbound_data and outbound_data.get("geometry"):
+                    out_coords = outbound_data["geometry"]["coordinates"]
+                    dir_out = (
+                        db.query(RouteDirection)
+                        .filter(RouteDirection.route_id == existing.id, RouteDirection.direction_type == "outbound")
+                        .first()
+                    )
+                    if dir_out:
+                        dir_out.origin_name = outbound_data["startPoint"]["name"]
+                        dir_out.destination_name = outbound_data["endPoint"]["name"]
+                        dir_out.origin_lat = out_coords[0][1]
+                        dir_out.origin_lng = out_coords[0][0]
+                        dir_out.destination_lat = out_coords[-1][1]
+                        dir_out.destination_lng = out_coords[-1][0]
+                        dir_out.polyline = json.dumps(outbound_data["geometry"])
+                        dir_out.distance_meters = int(outbound_data["distanceKm"] * 1000)
+                        dir_out.duration_seconds = int(outbound_data["durationMin"] * 60)
+                inbound_data = r_data.get("inbound")
+                if inbound_data and inbound_data.get("geometry"):
+                    in_coords = inbound_data["geometry"]["coordinates"]
+                    dir_in = (
+                        db.query(RouteDirection)
+                        .filter(RouteDirection.route_id == existing.id, RouteDirection.direction_type == "inbound")
+                        .first()
+                    )
+                    if dir_in:
+                        dir_in.origin_name = inbound_data["startPoint"]["name"]
+                        dir_in.destination_name = inbound_data["endPoint"]["name"]
+                        dir_in.origin_lat = in_coords[0][1]
+                        dir_in.origin_lng = in_coords[0][0]
+                        dir_in.destination_lat = in_coords[-1][1]
+                        dir_in.destination_lng = in_coords[-1][0]
+                        dir_in.polyline = json.dumps(inbound_data["geometry"])
+                        dir_in.distance_meters = int(inbound_data["distanceKm"] * 1000)
+                        dir_in.duration_seconds = int(inbound_data["durationMin"] * 60)
+                db.commit()
+            if first_route_id is None:
+                first_route_id = existing.id if existing else new_route.id
 
     # 7. Demo Driver & Assigned Vehicle AND-101
     driver_user = db.query(User).filter(User.phone == "+998901234569").first()
