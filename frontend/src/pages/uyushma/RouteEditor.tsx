@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { useAuth } from '../../contexts/AuthContext';
@@ -68,6 +68,7 @@ function isFarEnough(p1: [number, number], p2: [number, number], minMeters = 12)
 
 export function RouteEditor() {
   const { id } = useParams<{ id?: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
   const uyushmaId = user?.uyushma_id || 'uyushma-01';
@@ -76,8 +77,10 @@ export function RouteEditor() {
   const mapRef = useRef<maplibregl.Map | null>(null);
 
   // Route metadata
-  const [routeNumber, setRouteNumber] = useState('12');
-  const [routeName, setRouteName] = useState("O'sh ko'chasi — Yangi Bozor");
+  const paramNum = searchParams.get('number') || '';
+  const paramName = searchParams.get('name') || '';
+  const [routeNumber, setRouteNumber] = useState(paramNum || (id ? '12' : ''));
+  const [routeName, setRouteName] = useState(paramName || (id ? "O'sh ko'chasi — Yangi Bozor" : ''));
   const [routeStatus, setRouteStatus] = useState<'draft' | 'published'>('draft');
 
   // Direction tab
@@ -721,8 +724,14 @@ export function RouteEditor() {
         <div className="editor-top-bar__left">
           <button
             className="btn-back-link"
-            onClick={() => navigate('/uyushma/routes')}
-            title="Yo'nalishlar ro'yxatiga qaytish"
+            onClick={() => {
+              if (window.history.length > 1) {
+                navigate(-1);
+              } else {
+                navigate('/routes');
+              }
+            }}
+            title="Ortga qaytish"
           >
             <i className="ri-arrow-left-line" />
           </button>

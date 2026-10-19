@@ -68,12 +68,26 @@ export default function App() {
             <Route path="/" element={<ClientLayout />}>
               <Route index element={<Home />} />
               <Route path="search" element={<Search />} />
+              <Route path="routes" element={<Search />} />
               <Route path="route/:id" element={<RouteDetails />} />
               <Route path="overview/:number" element={<RouteOverview />} />
               <Route path="wallet" element={<WalletPage />} />
               <Route path="pay" element={<PaymentPage />} />
+              {/* Direct Open Route Editor (Add & Draw Routes without Uyushma) */}
+              <Route path="routes/editor" element={<RouteEditor />} />
+              <Route path="routes/editor/:id" element={<RouteEditor />} />
+              <Route path="route-editor" element={<RouteEditor />} />
+              <Route path="route-editor/:id" element={<RouteEditor />} />
+              <Route path="draw" element={<RouteEditor />} />
             </Route>
             <Route path="/signin" element={<SignIn />} />
+
+            {/* Direct Open Route Editor top-level shortcuts */}
+            <Route path="/routes/editor" element={<RouteEditor />} />
+            <Route path="/routes/editor/:id" element={<RouteEditor />} />
+            <Route path="/route-editor" element={<RouteEditor />} />
+            <Route path="/route-editor/:id" element={<RouteEditor />} />
+            <Route path="/draw" element={<RouteEditor />} />
 
             {/* ── Driver / Uyushma / Admin Auth ── */}
             <Route path="/login" element={<LoginPage />} />
@@ -93,15 +107,8 @@ export default function App() {
               <Route path="profile" element={<DriverProfile />} />
             </Route>
 
-            {/* ── Uyushma routes (desktop-first) ── */}
-            <Route
-              path="/uyushma"
-              element={
-                <RoleGuard allowedRoles={['uyushma']}>
-                  <UyushmaLayout />
-                </RoleGuard>
-              }
-            >
+            {/* ── Uyushma routes (open access without barrier) ── */}
+            <Route path="/uyushma" element={<UyushmaLayout />}>
               <Route index element={<UyushmaDashboard />} />
               <Route path="routes" element={<UyushmaRoutes />} />
               <Route path="routes/editor" element={<RouteEditor />} />

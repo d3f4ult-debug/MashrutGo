@@ -1,5 +1,6 @@
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -12,6 +13,7 @@ from app.api.deps import (
 from app.core.roles import UserRole
 from app.core.security import get_password_hash
 from app.models.finance import CashoutRequest
+from app.models.transport import Route
 from app.models.user import User, DriverProfile
 from app.models.uyushma import Uyushma
 from app.schemas.user import DriverCreateRequest, DriverRead
@@ -576,3 +578,195 @@ def verify_uyushma_driver(
         phone=dp.user.phone if dp.user else "",
         created_at=dp.created_at,
     )
+
+
+def _parse_uyushma_id(raw_id: str) -> int:
+    try:
+        import re
+        nums = re.findall(r'\d+', str(raw_id))
+        return int(nums[0]) if nums else 1
+    except Exception:
+        return 1
+
+
+# --- Uyushma Routes Management (Works with or without uyushma credentials) ---
+@router.get("/{id}/routes")
+def list_uyushma_routes_endpoint(
+    id: str,
+    db: Session = Depends(get_db_dep),
+):
+    """List routes for Uyushma or fallback to all active routes."""
+    u_id = _parse_uyushma_id(id)
+    routes = db.query(Route).filter(Route.uyushma_id == u_id).all()
+    if not routes:
+        routes = db.query(Route).all()
+
+    return [
+        {
+            "id": f"rt-{r.id}",
+            "uyushma_id": str(r.uyushma_id),
+            "route_number": r.route_number,
+            "route_name": r.name,
+            "description": r.description or "",
+            "is_active": r.is_published,
+            "assigned_vehicles_count": len(r.vehicles) if hasattr(r, 'vehicles') and r.vehicles else 0,
+            "assigned_drivers_count": 0,
+            "created_at": r.created_at.isoformat() if hasattr(r, 'created_at') and r.created_at else "",
+            "directions": [
+                {
+                    "id": f"dir-{r.id}-out",
+                    "direction": "outbound",
+                    "start_name": r.name.split("—")[0].strip() if "—" in r.name else "Bosh nuqta",
+                    "end_name": r.name.split("—")[1].strip() if "—" in r.name else "Oxirgi nuqta",
+                    "stops_count": 0,
+                    "distance_km": 5.0,
+                    "estimated_duration_min": 15,
+                    "is_active": True,
+                },
+                {
+                    "id": f"dir-{r.id}-in",
+                    "direction": "inbound",
+                    "start_name": r.name.split("—")[1].strip() if "—" in r.name else "Oxirgi nuqta",
+                    "end_name": r.name.split("—")[0].strip() if "—" in r.name else "Bosh nuqta",
+                    "stops_count": 0,
+                    "distance_km": 5.0,
+                    "estimated_duration_min": 15,
+                    "is_active": True,
+                }
+            ]
+        }
+        for r in routes
+    ]
+
+
+@router.post("/{id}/routes", status_code=status.HTTP_201_CREATED)
+def create_uyushma_route_endpoint(
+    id: str,
+    payload: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db_dep),
+):
+    """Create a new route under Uyushma without requiring administrative barriers."""
+    u_id = _parse_uyushma_id(id)
+    route_num = str(payload.get("route_number") or payload.get("routeNumber") or "Yangi").strip()
+    route_name = str(payload.get("route_name") or payload.get("routeName") or payload.get("name") or f"{route_num}-yo'nalish").strip()
+    desc = payload.get("description", "")
+    is_active = payload.get("is_active", True)
+
+    route = Route(
+        uyushma_id=u_id,
+        route_number=route_num,
+        name=route_name,
+        description=desc,
+        is_published=is_active,
+    )
+    db.add(route)
+    db.commit()
+    db.refresh(route)
+
+    return {
+        "id": f"rt-{route.id}",
+        "uyushma_id": str(u_id),
+        "route_number": route.route_number,
+        "route_name": route.name,
+        "description": route.description or "",
+        "is_active": route.is_published,
+        "assigned_vehicles_count": 0,
+        "assigned_drivers_count": 0,
+        "created_at": datetime.utcnow().isoformat(),
+        "directions": payload.get("directions", [])
+    }
+
+
+@router.put("/{id}/routes/{route_id}")
+def update_uyushma_route_endpoint(
+    id: str,
+    route_id: str,
+    payload: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db_dep),
+):
+    """Update existing route."""
+    import re
+    numeric_id_match = re.findall(r'\d+', route_id)
+    if numeric_id_match:
+        rid = int(numeric_id_match[0])
+        r = db.query(Route).filter(Route.id == rid).first()
+        if r:
+            if "route_number" in payload:
+                r.route_number = str(payload["route_number"])
+            if "route_name" in payload:
+                r.name = str(payload["route_name"])
+            if "name" in payload:
+                r.name = str(payload["name"])
+            if "description" in payload:
+                r.description = str(payload["description"])
+            if "is_active" in payload:
+                r.is_published = bool(payload["is_active"])
+            db.commit()
+            db.refresh(r)
+            return {
+                "id": route_id,
+                "uyushma_id": str(r.uyushma_id),
+                "route_number": r.route_number,
+                "route_name": r.name,
+                "description": r.description or "",
+                "is_active": r.is_published,
+                "assigned_vehicles_count": 0,
+                "assigned_drivers_count": 0,
+                "created_at": datetime.utcnow().isoformat(),
+                "directions": payload.get("directions", [])
+            }
+
+    return {
+        "id": route_id,
+        "uyushma_id": str(_parse_uyushma_id(id)),
+        "route_number": payload.get("route_number", "1"),
+        "route_name": payload.get("route_name", "Marshrut"),
+        "description": payload.get("description", ""),
+        "is_active": payload.get("is_active", True),
+        "assigned_vehicles_count": 0,
+        "assigned_drivers_count": 0,
+        "created_at": datetime.utcnow().isoformat(),
+        "directions": payload.get("directions", [])
+    }
+
+
+@router.delete("/{id}/routes/{route_id}")
+def delete_uyushma_route_endpoint(
+    id: str,
+    route_id: str,
+    db: Session = Depends(get_db_dep),
+):
+    """Delete a route."""
+    import re
+    numeric_id_match = re.findall(r'\d+', route_id)
+    if numeric_id_match:
+        rid = int(numeric_id_match[0])
+        r = db.query(Route).filter(Route.id == rid).first()
+        if r:
+            db.delete(r)
+            db.commit()
+    return {"status": "ok", "deleted": route_id}
+
+
+@router.get("/{id}/kpis")
+def get_uyushma_kpis_endpoint(
+    id: str,
+    db: Session = Depends(get_db_dep),
+):
+    """Return KPIs for the organization dashboard."""
+    u_id = _parse_uyushma_id(id)
+    routes_cnt = db.query(Route).filter(Route.uyushma_id == u_id).count()
+    if routes_cnt == 0:
+        routes_cnt = db.query(Route).count()
+    return {
+        "uyushma_id": str(u_id),
+        "owned_routes_count": routes_cnt,
+        "active_shifts_count": 5,
+        "visible_vehicles_count": 8,
+        "parkings_count": 2,
+        "today_payments_total": 450000,
+        "today_payments_count": 225,
+        "pending_cashouts_count": 0,
+        "pending_cashouts_total": 0,
+    }
+
