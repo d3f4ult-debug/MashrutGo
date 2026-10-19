@@ -96,121 +96,85 @@ def seed_initial_data(db: Session) -> None:
         db.add(parking2)
     db.commit()
 
-    # 5. Demo Route 10: "Yangi Bozor - Eski Shahar"
-    route_10 = (
-        db.query(Route)
-        .filter(Route.uyushma_id == default_uyushma.id, Route.route_number == "10")
-        .first()
-    )
-    if not route_10:
-        route_10 = Route(
-            uyushma_id=default_uyushma.id,
-            route_number="10",
-            name="Yangi Bozor - Eski Shahar",
-            description="Andijon markaziy 10-marshrut",
-            is_published=True,
-        )
-        db.add(route_10)
-        db.commit()
-        db.refresh(route_10)
+    # 5. Seed Real Andijon Transit & Marshrutka Routes (SHI-1, SHI-4, SHI-75, SHI-222, 7, YT-40, 44, Asaka, etc.)
+    import os
+    import json
 
-        # Fare rule for Route 10
-        fare_10 = FareRule(
-            uyushma_id=default_uyushma.id,
-            route_id=route_10.id,
-            rule_type="fixed",
-            base_fare_uzs=2500,
-            is_active=True,
-        )
-        db.add(fare_10)
+    json_path = os.path.join(os.path.dirname(__file__), "..", "data", "andijon_real_routes.json")
+    first_route_id = None
+    if os.path.exists(json_path):
+        with open(json_path, "r", encoding="utf-8") as f:
+            real_routes = json.load(f)
 
-        # Outbound direction
-        dir_out = RouteDirection(
-            route_id=route_10.id,
-            direction_type="outbound",
-            origin_name="Yangi Bozor",
-            destination_name="Eski Shahar",
-            origin_lat=40.7821,
-            origin_lng=72.3442,
-            destination_lat=40.7980,
-            destination_lng=72.3680,
-            distance_meters=3500,
-            duration_seconds=720,
-        )
-        db.add(dir_out)
-        db.commit()
-        db.refresh(dir_out)
-
-        # Waypoints for Outbound
-        waypoints = [
-            (1, "Yangi Bozor", 40.7821, 72.3442),
-            (2, "Navoiy Shoh ko'chasi", 40.7850, 72.3490),
-            (3, "Vokzal Maydoni", 40.7890, 72.3550),
-            (4, "Bobur Bog'i", 40.7930, 72.3610),
-            (5, "Eski Shahar", 40.7980, 72.3680),
-        ]
-        for order, name, lat, lng in waypoints:
-            wp = RouteWaypoint(
-                route_direction_id=dir_out.id,
-                order=order,
-                name=name,
-                lat=lat,
-                lng=lng,
-                is_stop=True,
+        for r_data in real_routes:
+            existing = (
+                db.query(Route)
+                .filter(Route.uyushma_id == default_uyushma.id, Route.route_number == r_data["route_number"])
+                .first()
             )
-            db.add(wp)
-        db.commit()
+            if not existing:
+                new_route = Route(
+                    uyushma_id=default_uyushma.id,
+                    route_number=r_data["route_number"],
+                    name=r_data["route_name"],
+                    description=r_data["description"],
+                    is_published=True,
+                )
+                db.add(new_route)
+                db.commit()
+                db.refresh(new_route)
 
-    # 6. Demo Route 15: "Avtovokzal - Bog'ishamol"
-    route_15 = (
-        db.query(Route)
-        .filter(Route.uyushma_id == default_uyushma.id, Route.route_number == "15")
-        .first()
-    )
-    if not route_15:
-        route_15 = Route(
-            uyushma_id=default_uyushma.id,
-            route_number="15",
-            name="Avtovokzal - Bog'ishamol",
-            description="Andijon 15-marshrut damas yo'nalishi",
-            is_published=True,
-        )
-        db.add(route_15)
-        db.commit()
-        db.refresh(route_15)
+                if first_route_id is None:
+                    first_route_id = new_route.id
 
-        dir_15_out = RouteDirection(
-            route_id=route_15.id,
-            direction_type="outbound",
-            origin_name="Avtovokzal",
-            destination_name="Bog'ishamol",
-            origin_lat=40.7750,
-            origin_lng=72.3350,
-            destination_lat=40.8120,
-            destination_lng=72.3750,
-            distance_meters=5200,
-            duration_seconds=980,
-        )
-        db.add(dir_15_out)
-        db.commit()
-        db.refresh(dir_15_out)
+                # Fare rule
+                fare_rule = FareRule(
+                    uyushma_id=default_uyushma.id,
+                    route_id=new_route.id,
+                    rule_type="fixed",
+                    base_fare_uzs=3000 if r_data.get("type") == "suburban" else 2000,
+                    is_active=True,
+                )
+                db.add(fare_rule)
 
-        waypoints_15 = [
-            (1, "Avtovokzal", 40.7750, 72.3350),
-            (2, "Universitet", 40.7820, 72.3450),
-            (3, "Viloyat Hokimiyati", 40.7890, 72.3560),
-            (4, "Bog'ishamol dam olish maskani", 40.8120, 72.3750),
-        ]
-        for order, name, lat, lng in waypoints_15:
-            db.add(RouteWaypoint(
-                route_direction_id=dir_15_out.id,
-                order=order,
-                name=name,
-                lat=lat,
-                lng=lng,
-                is_stop=True,
-            ))
-        db.commit()
+                # Outbound direction
+                outbound_data = r_data["outbound"]
+                out_coords = outbound_data["geometry"]["coordinates"]
+                dir_out = RouteDirection(
+                    route_id=new_route.id,
+                    direction_type="outbound",
+                    origin_name=outbound_data["startPoint"]["name"],
+                    destination_name=outbound_data["endPoint"]["name"],
+                    origin_lat=out_coords[0][1],
+                    origin_lng=out_coords[0][0],
+                    destination_lat=out_coords[-1][1],
+                    destination_lng=out_coords[-1][0],
+                    polyline=json.dumps(outbound_data["geometry"]),
+                    distance_meters=int(outbound_data["distanceKm"] * 1000),
+                    duration_seconds=int(outbound_data["durationMin"] * 60),
+                )
+                db.add(dir_out)
+
+                # Inbound direction
+                inbound_data = r_data["inbound"]
+                in_coords = inbound_data["geometry"]["coordinates"]
+                dir_in = RouteDirection(
+                    route_id=new_route.id,
+                    direction_type="inbound",
+                    origin_name=inbound_data["startPoint"]["name"],
+                    destination_name=inbound_data["endPoint"]["name"],
+                    origin_lat=in_coords[0][1],
+                    origin_lng=in_coords[0][0],
+                    destination_lat=in_coords[-1][1],
+                    destination_lng=in_coords[-1][0],
+                    polyline=json.dumps(inbound_data["geometry"]),
+                    distance_meters=int(inbound_data["distanceKm"] * 1000),
+                    duration_seconds=int(inbound_data["durationMin"] * 60),
+                )
+                db.add(dir_in)
+                db.commit()
+            elif first_route_id is None:
+                first_route_id = existing.id
 
     # 7. Demo Driver & Assigned Vehicle AND-101
     driver_user = db.query(User).filter(User.phone == "+998901234569").first()

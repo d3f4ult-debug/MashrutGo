@@ -12,6 +12,8 @@ const isDev = typeof import.meta !== 'undefined' && import.meta.env
   ? Boolean(import.meta.env.DEV)
   : true;
 
+import andijonRealRoutes from '../../data/andijon_real_routes.json';
+
 // ── In-Memory Store for Dev Mode ──
 let devRoutes: UyushmaRoute[] = [];
 let devDrivers: UyushmaDriver[] = [];
@@ -20,11 +22,51 @@ let devParkings: UyushmaParking[] = [];
 let devFares: UyushmaFareRule[] = [];
 
 function initDevData(_uyushmaId: string) {
-  devRoutes = [];
-  devDrivers = [];
-  devVehicles = [];
-  devParkings = [];
-  devFares = [];
+  if (devRoutes.length === 0) {
+    devRoutes = (andijonRealRoutes as any[]).map(r => {
+      // Ensure geometry is saved in localStorage so editor and maps immediately render it
+      if (typeof localStorage !== 'undefined') {
+        const key = `route_published_${r.id}`;
+        if (!localStorage.getItem(key)) {
+          localStorage.setItem(key, JSON.stringify(r));
+        }
+      }
+
+      return {
+        id: r.id,
+        uyushma_id: _uyushmaId,
+        route_number: r.route_number,
+        route_name: r.route_name,
+        description: r.description,
+        is_active: r.is_active,
+        assigned_vehicles_count: r.type === 'suburban' ? 8 : 12,
+        assigned_drivers_count: r.type === 'suburban' ? 8 : 12,
+        created_at: new Date().toISOString(),
+        directions: [
+          {
+            id: `${r.id}-out`,
+            direction: 'outbound' as const,
+            start_name: r.outbound?.startPoint?.name || "Bosh nuqta",
+            end_name: r.outbound?.endPoint?.name || "Oxirgi nuqta",
+            stops_count: 0,
+            distance_km: r.outbound?.distanceKm || 5.0,
+            estimated_duration_min: r.outbound?.durationMin || 15,
+            is_active: true,
+          },
+          {
+            id: `${r.id}-in`,
+            direction: 'inbound' as const,
+            start_name: r.inbound?.startPoint?.name || "Oxirgi nuqta",
+            end_name: r.inbound?.endPoint?.name || "Bosh nuqta",
+            stops_count: 0,
+            distance_km: r.inbound?.distanceKm || 5.0,
+            estimated_duration_min: r.inbound?.durationMin || 15,
+            is_active: true,
+          },
+        ],
+      };
+    });
+  }
 }
 
 export const uyushmaApi = {
@@ -105,13 +147,15 @@ export const uyushmaApi = {
   // ── Routes CRUD ──
   async getRoutes(uyushmaId: string): Promise<UyushmaRoute[]> {
     try {
-      return await apiClient.get<UyushmaRoute[]>(`/uyushma/${uyushmaId}/routes`);
-    } catch (err) {
-      if (isDev) {
-        initDevData(uyushmaId);
-        return [...devRoutes];
+      const data = await apiClient.get<UyushmaRoute[]>(`/uyushma/${uyushmaId}/routes`);
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
       }
-      throw err;
+      initDevData(uyushmaId);
+      return [...devRoutes];
+    } catch {
+      initDevData(uyushmaId);
+      return [...devRoutes];
     }
   },
 

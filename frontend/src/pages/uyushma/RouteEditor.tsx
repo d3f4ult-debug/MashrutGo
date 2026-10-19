@@ -104,17 +104,28 @@ export function RouteEditor() {
         setRouteName(target.route_name);
         setRouteStatus(target.is_active ? 'published' : 'draft');
 
-        // Check local storage draft or existing backend geometry
-        const localDraft = localStorage.getItem(`route_draft_${id}`);
+        // Check local storage or existing geometry
+        const localDraft = localStorage.getItem(`route_published_${id}`) || localStorage.getItem(`route_draft_${id}`);
         if (localDraft) {
           try {
             const parsed = JSON.parse(localDraft);
-            if (parsed.outbound?.geometry?.coordinates) {
+            if (parsed.outbound?.geometry?.coordinates?.length) {
               setOutboundCoords(parsed.outbound.geometry.coordinates);
             }
-            if (parsed.inbound?.geometry?.coordinates) {
+            if (parsed.inbound?.geometry?.coordinates?.length) {
               setInboundCoords(parsed.inbound.geometry.coordinates);
             }
+
+            // Fit map to route bounds if map is ready
+            setTimeout(() => {
+              const map = mapRef.current;
+              const coords = parsed.outbound?.geometry?.coordinates;
+              if (map && coords && coords.length > 1) {
+                const bounds = new maplibregl.LngLatBounds();
+                coords.forEach((c: [number, number]) => bounds.extend(c));
+                map.fitBounds(bounds, { padding: 80, duration: 800 });
+              }
+            }, 300);
           } catch {
             // Ignore parse errors
           }
