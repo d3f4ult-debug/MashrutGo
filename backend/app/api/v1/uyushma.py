@@ -652,16 +652,26 @@ def create_uyushma_route_endpoint(
     desc = payload.get("description", "")
     is_active = payload.get("is_active", True)
 
-    route = Route(
-        uyushma_id=u_id,
-        route_number=route_num,
-        name=route_name,
-        description=desc,
-        is_published=is_active,
-    )
-    db.add(route)
-    db.commit()
-    db.refresh(route)
+    existing = db.query(Route).filter(Route.uyushma_id == u_id, Route.route_number == route_num).first()
+    if existing:
+        existing.name = route_name
+        if desc:
+            existing.description = desc
+        existing.is_published = is_active
+        db.commit()
+        db.refresh(existing)
+        route = existing
+    else:
+        route = Route(
+            uyushma_id=u_id,
+            route_number=route_num,
+            name=route_name,
+            description=desc,
+            is_published=is_active,
+        )
+        db.add(route)
+        db.commit()
+        db.refresh(route)
 
     return {
         "id": f"rt-{route.id}",
