@@ -28,10 +28,10 @@ describe('routingService', () => {
   })
 
   it('gets route catalog data by route number', () => {
-    const route15 = getRouteByNumber('15')
-    expect(route15).toBeTruthy()
-    expect(route15?.routeNumber).toBe('15')
-    expect(route15?.stops.length).toBeGreaterThan(0)
+    const route222 = getRouteByNumber('222')
+    expect(route222).toBeTruthy()
+    expect(route222?.routeNumber).toMatch(/222/)
+    expect(route222?.stops.length).toBeGreaterThan(0)
 
     const nonExistent = getRouteByNumber('999')
     expect(nonExistent).toBeNull()

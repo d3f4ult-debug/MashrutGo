@@ -142,6 +142,9 @@ export default function Search() {
     if (!map || !selectedItinerary) return
 
     clearAllMarkers(map)
+    for (let i = 0; i < 20; i++) {
+      clearPolyline(map, `leg-${i}`)
+    }
     clearPolyline(map, 'walk-1')
     clearPolyline(map, 'transit-main')
     clearPolyline(map, 'walk-2')
@@ -154,7 +157,7 @@ export default function Search() {
         drawPolyline(map, lineId, leg.geometry, {
           color: leg.type === 'walking' ? '#64748b' : '#2563eb',
           dashed: leg.type === 'walking',
-          width: leg.type === 'walking' ? 3 : 5
+          width: leg.type === 'walking' ? 3 : 6
         })
         leg.geometry.forEach((pt) => allPoints.push(pt))
       }
@@ -211,7 +214,7 @@ export default function Search() {
                 type="text"
                 value={fromInput}
                 onChange={(e) => setFromInput(e.target.value)}
-                placeholder="A — Qayerdan?"
+                placeholder="A — Qayerdan? (yoki marshrut: 222...)"
                 className="w-full pl-9 pr-8 py-2.5 bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
@@ -244,7 +247,7 @@ export default function Search() {
                 value={toInput}
                 onChange={(e) => handleToInputChange(e.target.value)}
                 onFocus={() => setShowToSuggestions(true)}
-                placeholder="B — Qayerga?"
+                placeholder="B — Qayerga? (yoki marshrut: 222...)"
                 className="w-full pl-9 pr-8 py-2.5 bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               {toInput && (
@@ -312,18 +315,63 @@ export default function Search() {
               </button>
             ))}
           </div>
+
+          {/* Quick Route Number Chips */}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1.5 border-t border-neutral-100 text-xs">
+            <span className="text-[11px] text-blue-600 font-bold whitespace-nowrap flex items-center gap-1">
+              <i className="ri-bus-line" /> Marshrut:
+            </span>
+            {[
+              { num: '222', label: '222: Pistamozor — Shifoxona' },
+              { num: '1', label: '1: Gulshan — Shifoxona' },
+              { num: '4', label: '4: Aeroport — Shifoxona' },
+              { num: '75', label: '75: Pistamozor — 36-post' },
+              { num: '7', label: '7: Qozoq kottej — Bobur bog‘i' },
+              { num: '40', label: '40: Qoʻshariq — Boʻriboy' },
+              { num: '44', label: '44: 3-daha — Jahon bozori' },
+              { num: 'Asaka', label: 'Andijon — Asaka' },
+              { num: 'Shahrixon', label: 'Andijon — Shahrixon' }
+            ].map((rt) => (
+              <button
+                key={rt.num}
+                type="button"
+                onClick={() => {
+                  setToInput(`Marshrut ${rt.num}`)
+                  setFromInput('')
+                  executeSearch('', rt.num)
+                }}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all flex items-center gap-1 ${
+                  toParam.toLowerCase().includes(rt.num.toLowerCase()) || fromParam.toLowerCase().includes(rt.num.toLowerCase())
+                    ? 'bg-blue-600 text-white shadow-xs ring-2 ring-blue-400'
+                    : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                }`}
+                title={rt.label}
+              >
+                <span>№ {rt.num}</span>
+              </button>
+            ))}
+          </div>
         </form>
       </section>
 
       {/* Active Route Header Summary */}
       <div className="bg-white rounded-2xl p-3.5 border border-neutral-200 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-neutral-800">
-          <span className="text-blue-600 font-bold">{fromParam}</span>
-          <i className="ri-arrow-right-line text-neutral-400"></i>
-          <span className="text-red-600 font-bold">{toParam}</span>
+          {fromParam && toParam && fromParam !== toParam ? (
+            <>
+              <span className="text-blue-600 font-bold">{fromParam}</span>
+              <i className="ri-arrow-right-line text-neutral-400"></i>
+              <span className="text-red-600 font-bold">{toParam}</span>
+            </>
+          ) : (
+            <span className="text-blue-700 font-bold flex items-center gap-1.5">
+              <i className="ri-bus-2-fill text-blue-600 text-base" />
+              <span>{toParam || fromParam}</span>
+            </span>
+          )}
         </div>
         <div className="text-[11px] text-neutral-500 font-medium">
-          {loading ? 'Yo‘nalishlar hisoblanmoqda...' : `${filteredItineraries.length} ta variant topildi`}
+          {loading ? 'Yo‘nalishlar hisoblanmoqda...' : `${filteredItineraries.length} ta haqiqiy variant`}
         </div>
       </div>
 

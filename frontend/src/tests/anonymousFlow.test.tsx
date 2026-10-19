@@ -2,7 +2,8 @@ import React from 'react'
 import { render, screen } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
-import { AuthProvider } from '@/services/auth/AuthProvider'
+import { AuthProvider as ClientAuthProvider } from '@/services/auth/AuthProvider'
+import { AuthProvider as SystemAuthProvider } from '@/contexts/AuthContext'
 import Home from '@/features/client/pages/Home'
 import RouteDetails from '@/pages/RouteDetails'
 import WalletPage from '@/pages/WalletPage'
@@ -18,9 +19,11 @@ describe('Anonymous User Flow', () => {
   it('allows anonymous browsing of Home page without authentication', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
-        <AuthProvider>
-          <Home />
-        </AuthProvider>
+        <SystemAuthProvider>
+          <ClientAuthProvider>
+            <Home />
+          </ClientAuthProvider>
+        </SystemAuthProvider>
       </MemoryRouter>
     )
 
@@ -31,11 +34,13 @@ describe('Anonymous User Flow', () => {
   it('allows anonymous viewing of RouteDetails page with live fleet and stops', () => {
     render(
       <MemoryRouter initialEntries={['/route/15']}>
-        <AuthProvider>
-          <Routes>
-            <Route path="/route/:id" element={<RouteDetails />} />
-          </Routes>
-        </AuthProvider>
+        <SystemAuthProvider>
+          <ClientAuthProvider>
+            <Routes>
+              <Route path="/route/:id" element={<RouteDetails />} />
+            </Routes>
+          </ClientAuthProvider>
+        </SystemAuthProvider>
       </MemoryRouter>
     )
 
@@ -46,9 +51,11 @@ describe('Anonymous User Flow', () => {
   it('prompts authentication when entering WalletPage without an active session', () => {
     render(
       <MemoryRouter initialEntries={['/wallet']}>
-        <AuthProvider>
-          <WalletPage />
-        </AuthProvider>
+        <SystemAuthProvider>
+          <ClientAuthProvider>
+            <WalletPage />
+          </ClientAuthProvider>
+        </SystemAuthProvider>
       </MemoryRouter>
     )
 

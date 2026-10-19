@@ -526,6 +526,64 @@ export default function Home() {
           <AppMap onMapReady={handleMapReady} />
         </div>
       </section>
+
+      {/* Featured Real Routes Section */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
+              <i className="ri-fire-fill text-amber-500"></i>
+              Tavsiya etilgan marshrutlar
+            </h2>
+            <p className="text-xs text-neutral-500">Andijon shahrining asosiy va eng gavjum yo‘nalishlari</p>
+          </div>
+          <button
+            onClick={() => navigate('/routes')}
+            className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline"
+          >
+            Barchasini ko‘rish →
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <RouteCard
+            title="№ 222: Pistamozor — Markaziy shahar shifoxonasi"
+            eta="22 daqiqa"
+            price="2 000 so‘m"
+            walking="150 m"
+            transfers={0}
+            routeNumbers="222"
+            onClick={() => navigate('/routes')}
+          />
+          <RouteCard
+            title="№ 1: Gulshan MFY — Markaziy shahar shifoxonasi"
+            eta="25 daqiqa"
+            price="2 000 so‘m"
+            walking="200 m"
+            transfers={0}
+            routeNumbers="1"
+            onClick={() => navigate('/routes')}
+          />
+          <RouteCard
+            title="№ 4: Aeroport — Markaziy shahar shifoxonasi"
+            eta="28 daqiqa"
+            price="2 000 so‘m"
+            walking="250 m"
+            transfers={0}
+            routeNumbers="4"
+            onClick={() => navigate('/routes')}
+          />
+          <RouteCard
+            title="№ 75: Pistamozor — 36-post"
+            eta="30 daqiqa"
+            price="2 000 so‘m"
+            walking="300 m"
+            transfers={0}
+            routeNumbers="75"
+            onClick={() => navigate('/routes')}
+          />
+        </div>
+      </section>
     </div>
   )
 }

@@ -186,10 +186,10 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: Props) {
         <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
           <div>
             <h3 className="text-lg font-bold text-neutral-900">
-              {codeSent ? 'Tasdiqlash kodi' : 'Ro‘yxatdan o‘tish / Kirish'}
+              {codeSent ? 'Tasdiqlash kodi' : 'Tizimga kirish / Ro‘yxatdan o‘tish'}
             </h3>
             <p className="text-xs text-neutral-500">
-              {codeSent ? `${phone} raqamiga yuborildi` : 'Andijon jamoat transporti yo‘lovchi profili'}
+              {codeSent ? `${phone} raqamiga yuborildi` : 'Hamyon va to‘lovlardan foydalanish uchun kiring'}
             </p>
           </div>
           <button
